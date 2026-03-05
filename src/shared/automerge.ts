@@ -7,10 +7,22 @@ export type { DocHandle, DocumentId, PeerId } from '@automerge/automerge-repo';
 export type { PeerState, PresenceState } from '@automerge/automerge-repo';
 import type { WorkerToMain } from '../client/automerge-worker';
 
-const REPO_WEBSOCKET_KEY = 'automerge-ws-url';
+const SYNC_DISABLED_KEY = 'automerge-sync-disabled';
+
+function defaultWsUrl(): string {
+  if (typeof location === 'undefined') return '';
+  return location.protocol === 'http:'
+    ? `ws://${location.host}`
+    : 'wss://sync.automerge.org';
+}
+
+export function isSyncEnabled(): boolean {
+  return localStorage.getItem(SYNC_DISABLED_KEY) !== '1';
+}
 
 export function getWsUrl(): string {
-  return localStorage.getItem(REPO_WEBSOCKET_KEY) ?? '';
+  if (!isSyncEnabled()) return '';
+  return defaultWsUrl();
 }
 
 // --- Worker setup ---
@@ -34,14 +46,13 @@ worker.postMessage(
   [channel.port2],
 );
 
-export function setWsUrl(url: string) {
-  const trimmed = url.trim();
-  if (trimmed === '') {
-    localStorage.removeItem(REPO_WEBSOCKET_KEY);
+export function setSyncEnabled(enabled: boolean) {
+  if (enabled) {
+    localStorage.removeItem(SYNC_DISABLED_KEY);
   } else {
-    localStorage.setItem(REPO_WEBSOCKET_KEY, trimmed);
+    localStorage.setItem(SYNC_DISABLED_KEY, '1');
   }
-  worker.postMessage({ type: 'set-ws-url', wsUrl: trimmed });
+  worker.postMessage({ type: 'set-ws-url', wsUrl: enabled ? defaultWsUrl() : '' });
 }
 
 // --- Repo network ready promise (resolves when main-thread repo connects to worker peer) ---

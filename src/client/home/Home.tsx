@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
-import { repo, Automerge, Presence, useConnectionStatus, getWsUrl, setWsUrl, workerReady } from '../../shared/automerge';
+import { repo, Automerge, Presence, useConnectionStatus, isSyncEnabled, setSyncEnabled, workerReady } from '../../shared/automerge';
 import type { DocHandle } from '../../shared/automerge';
 import { peerColor } from '../../shared/presence';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
-import { Input } from '@/components/ui/input';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
@@ -23,22 +22,6 @@ interface DocEntry {
   count: number | null;
   lastUpdated: number | null;
   progress: number | null;
-}
-
-// Migrate old per-type storage keys into the unified key
-function migrateOldStorageKeys() {
-  const oldCalKey = 'automerge-calendar-ids';
-  const oldTaskKey = 'automerge-tasklist-ids';
-  let calIds: string[] = [];
-  let taskIds: string[] = [];
-  try { calIds = JSON.parse(localStorage.getItem(oldCalKey) || '[]'); } catch {}
-  try { taskIds = JSON.parse(localStorage.getItem(oldTaskKey) || '[]'); } catch {}
-  if (calIds.length > 0 || taskIds.length > 0) {
-    for (const id of calIds) addDocId(id);
-    for (const id of taskIds) addDocId(id);
-    localStorage.removeItem(oldCalKey);
-    localStorage.removeItem(oldTaskKey);
-  }
 }
 
 dayjs.extend(relativeTimePlugin);
@@ -93,7 +76,6 @@ function iconForType(type: DocType): string {
 }
 
 function initialEntries(): DocEntry[] {
-  migrateOldStorageKeys();
   const docMap = getDocMap();
   return Object.keys(docMap).map(id => ({
     type: (docMap[id].type || 'unknown') as DocType,
@@ -514,12 +496,7 @@ export function Home({ path }: { path?: string }) {
     }
   }, [loadAll]);
 
-  const defaultWsUrl = location.protocol === 'http:'
-    ? `ws://${location.host}`
-    : 'wss://sync.automerge.org';
-  const savedWsUrl = getWsUrl();
-  const [wsInput, setWsInput] = useState(() => savedWsUrl || defaultWsUrl);
-  const wsIsSet = !!savedWsUrl;
+  const syncOn = isSyncEnabled();
 
   const sorted = [...entries].sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
 
@@ -648,31 +625,19 @@ export function Home({ path }: { path?: string }) {
         )}
       </div>
 
-      <form
-        className="flex items-center gap-2 mb-6"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (wsIsSet) {
-            setWsUrl('');
-          } else {
-            setWsUrl(wsInput);
-          }
-          location.reload();
-        }}
-      >
-        <span className="text-xs text-muted-foreground shrink-0">Sync server</span>
-        <Input
-          type="url"
-          placeholder="wss://sync.automerge.org"
-          value={wsInput}
-          onInput={(e) => setWsInput((e.target as HTMLInputElement).value)}
-          className="flex-1 max-w-xs h-8"
-          disabled={wsIsSet}
-        />
-        <Button type="submit" variant="outline" size="sm">
-          {wsIsSet ? 'Remove & reload' : 'Set & reload'}
+      <div className="flex items-center gap-2 mb-6">
+        <span className="text-xs text-muted-foreground">Sync server</span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setSyncEnabled(!syncOn);
+            location.reload();
+          }}
+        >
+          {syncOn ? 'Disable & reload' : 'Enable & reload'}
         </Button>
-      </form>
+      </div>
 
       <PresenceLogTable entries={presenceLog} onClear={clearLog} showDocId />
     </div>
