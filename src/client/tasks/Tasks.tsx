@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 
 interface EditorState {
   uid: string;
@@ -301,9 +302,7 @@ export function Tasks({ docId }: { docId?: string; path?: string }) {
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
       {loadProgress !== null && (
-        <div className="load-progress-track">
-          <div className="load-progress-bar" style={{ width: `${loadProgress}%` }} />
-        </div>
+        <Progress className="my-1" value={loadProgress} />
       )}
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
 

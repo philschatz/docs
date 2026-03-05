@@ -13,6 +13,7 @@ import { initDragDrop } from './drag-drop';
 import { EventEditor } from './EventEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
+import { Progress } from '@/components/ui/progress';
 
 
 interface EditorState {
@@ -385,9 +386,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
       {loadProgress !== null && (
-        <div className="load-progress-track">
-          <div className="load-progress-bar" style={{ width: `${loadProgress}%` }} />
-        </div>
+        <Progress className="my-1" value={loadProgress} />
       )}
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
       <div id="sx-cal" />

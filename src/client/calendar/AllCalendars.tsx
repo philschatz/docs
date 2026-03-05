@@ -46,7 +46,11 @@ function generateUid() {
 }
 
 function getSavedIds(): string[] {
-  try { return JSON.parse(localStorage.getItem('automerge-doc-ids') || '[]'); } catch { return []; }
+  try {
+    const raw = JSON.parse(localStorage.getItem('automerge-doc-ids') || '{}');
+    if (Array.isArray(raw)) return raw;
+    return Object.keys(raw);
+  } catch { return []; }
 }
 
 const defaultTZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -243,14 +247,7 @@ export function AllCalendars({ path }: { path?: string }) {
     let mounted = true;
 
     (async () => {
-      const savedIds = getSavedIds();
-      let serverIds: string[] = [];
-      try {
-        const res = await fetch('/api/docs');
-        const list: { documentId: string }[] = await res.json();
-        serverIds = list.map(d => d.documentId);
-      } catch {}
-      const allIds = [...new Set([...savedIds, ...serverIds])];
+      const allIds = getSavedIds();
 
       const loaded: LoadedCalendar[] = [];
       await Promise.all(allIds.map(async (id) => {

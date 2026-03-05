@@ -38,17 +38,3 @@
     vertical-align: middle;
   }
 }
-
-.load-progress-track {
-  height: 3px;
-  background: hsl(0 0% 90%);
-  border-radius: 2px;
-  overflow: hidden;
-  margin: 4px 0;
-}
-.load-progress-bar {
-  height: 100%;
-  background: var(--color-primary);
-  transition: width 0.15s ease;
-  border-radius: 2px;
-}

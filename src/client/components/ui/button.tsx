@@ -33,6 +33,7 @@ export interface ButtonProps
   extends JSX.HTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   disabled?: boolean;
+  type?: "button" | "submit" | "reset";
 }
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(

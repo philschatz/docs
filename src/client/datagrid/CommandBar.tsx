@@ -2,6 +2,9 @@ import {
   Menubar, MenubarMenu, MenubarTrigger, MenubarContent,
   MenubarItem, MenubarCheckboxItem, MenubarSeparator, MenubarShortcut,
 } from '@/components/ui/menubar';
+import {
+  ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut,
+} from '@/components/ui/context-menu';
 import { Button } from '@/components/ui/button';
 import type { ResolvedEntry, ResolvedMenu } from './commands';
 
@@ -95,43 +98,33 @@ export function CommandToolbar({ entries }: CommandToolbarProps) {
 }
 
 // ------------------------------------------------------------
-// CommandContextMenu — inline context menu content
+// CommandContextMenuContent — renders entries inside a Radix ContextMenuContent
 // ------------------------------------------------------------
 
-interface CommandContextMenuProps {
+interface CommandContextMenuContentProps {
   entries: ResolvedEntry[];
-  onClose: () => void;
 }
 
-export function CommandContextMenu({ entries, onClose }: CommandContextMenuProps) {
+export function CommandContextMenuContent({ entries }: CommandContextMenuContentProps) {
   return (
-    <>
+    <ContextMenuContent>
       {entries.map((entry, i) => {
         if (entry.kind === 'separator') {
-          return <div key={`sep-${i}`} className="datagrid-context-menu-separator" />;
+          return <ContextMenuSeparator key={`sep-${i}`} />;
         }
         return (
-          <div
+          <ContextMenuItem
             key={entry.id}
-            className={
-              'datagrid-context-menu-item' +
-              (entry.danger ? ' datagrid-context-menu-danger' : '') +
-              (!entry.isEnabled ? ' datagrid-context-menu-disabled' : '')
-            }
-            onClick={() => {
-              if (!entry.isEnabled) return;
-              entry.execute();
-              onClose();
-            }}
+            disabled={!entry.isEnabled}
+            className={entry.danger ? 'text-destructive focus:text-destructive' : undefined}
+            onSelect={entry.execute}
           >
-            <span className="datagrid-context-menu-icon">
-              {entry.icon && <span className="material-symbols-outlined">{entry.icon}</span>}
-            </span>
-            <span className="datagrid-context-menu-label">{entry.label}</span>
-            {entry.shortcut && <span className="datagrid-context-menu-shortcut">{entry.shortcut}</span>}
-          </div>
+            {entry.icon && <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{entry.icon}</span>}
+            {entry.label}
+            {entry.shortcut && <ContextMenuShortcut>{entry.shortcut}</ContextMenuShortcut>}
+          </ContextMenuItem>
         );
       })}
-    </>
+    </ContextMenuContent>
   );
 }

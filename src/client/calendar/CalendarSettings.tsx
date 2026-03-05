@@ -28,7 +28,9 @@ export function CalendarSettings({ opened, docId, handle, name, description, col
     if (!handle) return;
     handle.change((d: any) => {
       d.name = localName.trim() || 'Untitled';
-      d.description = localDesc.trim() || undefined;
+      const desc = localDesc.trim();
+      if (desc) d.description = desc;
+      else delete d.description;
       d.color = localColor;
     });
     onClose();

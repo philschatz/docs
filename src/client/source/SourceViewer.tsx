@@ -10,6 +10,7 @@ import { validateDocument } from '../../shared/schemas';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { hashHistory } from '../hash-history';
 import type { Patch } from '@automerge/automerge';
+import { Progress } from '@/components/ui/progress';
 import './source-viewer.css';
 
 type Path = (string | number)[];
@@ -427,9 +428,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       <PresenceBar peers={peerList} />
 
       {loadProgress !== null && (
-        <div className="load-progress-track">
-          <div className="load-progress-bar" style={{ width: `${loadProgress}%` }} />
-        </div>
+        <Progress className="my-1" value={loadProgress} />
       )}
       {status && <div className="viewer-status">{status}</div>}
 

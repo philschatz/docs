@@ -7,7 +7,8 @@ import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
 import type { DataGridDocument } from './schema';
 import { migrateDataGridDocument } from './schema';
 import { useGridCommands, commitReorder, commitAutofill, setCell, type GridCommandState, type GridCommandContext } from './commands';
-import { CommandMenuBar, CommandToolbar, CommandContextMenu } from './CommandBar';
+import { CommandMenuBar, CommandToolbar, CommandContextMenuContent } from './CommandBar';
+import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
 import HyperFormula from 'hyperformula';
 import {
   sortedEntries, colIndexToLetter, shortId,
@@ -21,6 +22,7 @@ import { useUndoRedo } from '../../shared/useUndoRedo';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { registerCustomFunctions } from './hf-functions';
+import { Progress } from '@/components/ui/progress';
 import './datagrid.css';
 
 registerCustomFunctions();
@@ -40,7 +42,6 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [selectedCols, setSelectedCols] = useState<Set<number>>(new Set());
   const [contextMenu, setContextMenu] = useState<{
-    x: number; y: number;
     type: 'row' | 'col' | 'cell';
     indices: number[];
   } | null>(null);
@@ -80,7 +81,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const sheetRenameRef = useRef<((id: string) => void) | null>(null);
   const [autofillTarget, setAutofillTarget] = useState<{ minCol: number; maxCol: number; minRow: number; maxRow: number } | null>(null);
   const [clipboardSource, setClipboardSource] = useState<{ minRow: number; maxRow: number; minCol: number; maxCol: number } | null>(null);
-  const [sheetContextMenu, setSheetContextMenu] = useState<{ sheetId: string; x: number; y: number } | null>(null);
+  const [sheetContextMenu, setSheetContextMenu] = useState<string | null>(null);
   const clipboardRef = useRef<{
     values: string[][];
     mode: 'copy' | 'cut';
@@ -600,8 +601,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
 
   // -- Context menu handlers --
 
-  const handleRowContextMenu = useCallback((ri: number, e: MouseEvent) => {
-    e.preventDefault();
+  const handleRowContextMenu = useCallback((ri: number, _e: MouseEvent) => {
     const indices = selectedRows.has(ri) ? [...selectedRows].sort((a, b) => a - b) : [ri];
     if (!selectedRows.has(ri)) {
       setSelectedRows(new Set([ri]));
@@ -609,11 +609,10 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       setSelectedCell(null);
       lastClickedRowRef.current = ri;
     }
-    setContextMenu({ x: e.clientX, y: e.clientY, type: 'row', indices });
+    setContextMenu({ type: 'row', indices });
   }, [selectedRows]);
 
-  const handleColContextMenu = useCallback((ci: number, e: MouseEvent) => {
-    e.preventDefault();
+  const handleColContextMenu = useCallback((ci: number, _e: MouseEvent) => {
     const indices = selectedCols.has(ci) ? [...selectedCols].sort((a, b) => a - b) : [ci];
     if (!selectedCols.has(ci)) {
       setSelectedCols(new Set([ci]));
@@ -621,13 +620,12 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       setSelectedCell(null);
       lastClickedColRef.current = ci;
     }
-    setContextMenu({ x: e.clientX, y: e.clientY, type: 'col', indices });
+    setContextMenu({ type: 'col', indices });
   }, [selectedCols]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') {
-      if (contextMenu) { setContextMenu(null); return; }
       if (editingCell) { cancelEdit(); return; }
       if (selectionAnchor) { setSelectionAnchor(null); return; }
       return;
@@ -674,7 +672,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     if (newCol !== col || newRow !== row) {
       selectCell(newCol, newRow);
     }
-  }, [editingCell, selectedCell, selectionAnchor, selectionRange, sortedColIds, sortedRowIds, startEditing, selectCell, contextMenu, cancelEdit]);
+  }, [editingCell, selectedCell, selectionAnchor, selectionRange, sortedColIds, sortedRowIds, startEditing, selectCell, cancelEdit]);
 
   useEffect(() => {
     const el = tableRef.current;
@@ -794,18 +792,6 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     };
   }, []);
 
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu && !sheetContextMenu) return;
-    const handleClick = () => { setContextMenu(null); setSheetContextMenu(null); };
-    const handleScroll = () => { setContextMenu(null); setSheetContextMenu(null); };
-    document.addEventListener('click', handleClick);
-    document.addEventListener('scroll', handleScroll, true);
-    return () => {
-      document.removeEventListener('click', handleClick);
-      document.removeEventListener('scroll', handleScroll, true);
-    };
-  }, [contextMenu, sheetContextMenu]);
 
   // Peer presence cell map — keyed by "col:row", first peer wins
   const peerCellMap = useMemo(() => {
@@ -1022,7 +1008,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     setSelectedCols,
     undo,
     redo,
-    targetSheetId: sheetContextMenu?.sheetId,
+    targetSheetId: sheetContextMenu ?? undefined,
     onDeleteSheet: handleDeleteSheet,
     onHideSheet: handleHideSheet,
     onRenameSheet: (id) => {
@@ -1064,9 +1050,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       <ValidationPanel errors={validationErrors} docId={docId} />
 
       {loadProgress !== null && (
-        <div className="load-progress-track">
-          <div className="load-progress-bar" style={{ width: `${loadProgress}%` }} />
-        </div>
+        <Progress className="my-1" value={loadProgress} />
       )}
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
 
@@ -1137,6 +1121,8 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
           )}
 
           {/* Grid table + sheet tabs wrapper */}
+          <ContextMenu modal={false} onOpenChange={(open: boolean) => { if (!open) setContextMenu(null); }}>
+          <ContextMenuTrigger asChild>
           <div className="datagrid-container" ref={tableRef} tabIndex={0}>
             <table className="datagrid-table">
               <thead>
@@ -1252,10 +1238,9 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                               }
                             }}
                             onDblClick={() => startEditing(ci, ri)}
-                            onContextMenu={(e: any) => {
-                              e.preventDefault();
+                            onContextMenu={() => {
                               if (!isSelected && !inRange) selectCell(ci, ri);
-                              setContextMenu({ x: e.clientX, y: e.clientY, type: 'cell', indices: [] });
+                              setContextMenu({ type: 'cell', indices: [] });
                             }}
                           >
                             {isEditing ? (
@@ -1340,51 +1325,36 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
               </tbody>
             </table>
           </div>
-
-          <SheetTabs
-            sheets={sheetOrder}
-            currentSheetId={currentSheetId ?? ''}
-            onSelect={handleSelectSheet}
-            onAdd={handleAddSheet}
-            onRename={handleRenameSheet}
-            onReorder={handleReorderSheet}
-            onContextMenu={(id, x, y) => setSheetContextMenu({ sheetId: id, x, y })}
-            renameRef={sheetRenameRef}
+          </ContextMenuTrigger>
+          <CommandContextMenuContent
+            entries={
+              contextMenu?.type === 'cell' ? commands.cellCtx
+              : contextMenu?.type === 'row' ? commands.rowCtx
+              : contextMenu?.type === 'col' ? commands.colCtx
+              : []
+            }
           />
+          </ContextMenu>
+
+          <ContextMenu modal={false} onOpenChange={(open: boolean) => { if (!open) setSheetContextMenu(null); }}>
+            <ContextMenuTrigger>
+              <SheetTabs
+                sheets={sheetOrder}
+                currentSheetId={currentSheetId ?? ''}
+                onSelect={handleSelectSheet}
+                onAdd={handleAddSheet}
+                onRename={handleRenameSheet}
+                onReorder={handleReorderSheet}
+                onContextMenu={(id) => setSheetContextMenu(id)}
+                renameRef={sheetRenameRef}
+              />
+            </ContextMenuTrigger>
+            <CommandContextMenuContent entries={commands.sheetCtx} />
+          </ContextMenu>
         </>
       )}
 
-      {/* Cell/row/col context menu */}
-      {contextMenu && (
-        <div
-          className="datagrid-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(e: any) => e.stopPropagation()}
-        >
-          <CommandContextMenu
-            entries={
-              contextMenu.type === 'cell' ? commands.cellCtx
-              : contextMenu.type === 'row' ? commands.rowCtx
-              : commands.colCtx
-            }
-            onClose={() => setContextMenu(null)}
-          />
-        </div>
-      )}
 
-      {/* Sheet tab context menu */}
-      {sheetContextMenu && (
-        <div
-          className="datagrid-context-menu"
-          style={{ left: sheetContextMenu.x, top: sheetContextMenu.y }}
-          onClick={(e: any) => e.stopPropagation()}
-        >
-          <CommandContextMenu
-            entries={commands.sheetCtx}
-            onClose={() => setSheetContextMenu(null)}
-          />
-        </div>
-      )}
 
       <PresenceLogTable entries={presenceLog} onClear={clearLog} />
     </div>

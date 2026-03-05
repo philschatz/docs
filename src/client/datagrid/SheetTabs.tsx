@@ -14,7 +14,7 @@ interface SheetTabsProps {
   onAdd: () => void;
   onRename: (id: string, name: string) => void;
   onReorder: (draggedId: string, dropIndex: number) => void;
-  onContextMenu: (id: string, x: number, y: number) => void;
+  onContextMenu: (id: string) => void;
   /** Ref that exposes a function to trigger inline rename from outside. */
   renameRef?: RefObject<((id: string) => void) | null>;
 }
@@ -113,9 +113,8 @@ export function SheetTabs({ sheets, currentSheetId, onSelect, onAdd, onRename, o
             onClick={() => { if (!isRenaming) onSelect(sheet.id); }}
             onDblClick={() => startRename(sheet.id, sheet.name)}
             onMouseDown={(e: any) => handleTabMouseDown(sheet.id, e)}
-            onContextMenu={(e: any) => {
-              e.preventDefault();
-              onContextMenu(sheet.id, e.clientX, e.clientY);
+            onContextMenu={() => {
+              onContextMenu(sheet.id);
             }}
           >
             {isRenaming ? (

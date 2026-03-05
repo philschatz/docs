@@ -5,6 +5,9 @@ import { peerColor } from '../../shared/presence';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
@@ -592,6 +595,49 @@ export function Home({ path }: { path?: string }) {
         </Alert>
       )}
 
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <a href="#/calendars/">
+          <Button variant="outline">
+            <span className="material-symbols-outlined">date_range</span> All calendars
+          </Button>
+        </a>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <span className="material-symbols-outlined">add</span> New
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={handleCreateCalendar}>
+              <span className="material-symbols-outlined">calendar_month</span> Calendar
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={handleCreateTaskList}>
+              <span className="material-symbols-outlined">checklist</span> Task list
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={handleCreateDataGrid}>
+              <span className="material-symbols-outlined">grid_on</span> Spreadsheet
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <input type="file" ref={icsInputRef} accept=".ics,text/calendar" style={{ display: 'none' }} onChange={handleImportIcs as any} />
+        <input type="file" ref={xlsInputRef} accept=".xls,.xlsx,.csv" style={{ display: 'none' }} onChange={handleImportXlsx as any} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <span className="material-symbols-outlined">upload_file</span> Import
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={() => icsInputRef.current?.click()}>
+              <span className="material-symbols-outlined">calendar_month</span> Import .ics
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => xlsInputRef.current?.click()}>
+              <span className="material-symbols-outlined">grid_on</span> Import .xlsx
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <div className="flex flex-col">
         {sorted.map(entry => {
           const viewPath = viewPathForEntry(entry);
@@ -614,9 +660,7 @@ export function Home({ path }: { path?: string }) {
                 />
               ))}
               {entry.progress != null ? (
-                <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden" title={`Loading ${entry.progress}%`}>
-                  <div className="h-full bg-foreground/30 rounded-full transition-all" style={{ width: `${entry.progress}%` }} />
-                </div>
+                <Progress className="w-16" value={entry.progress} title={`Loading ${entry.progress}%`} />
               ) : (
                 <>
                   <a href={viewPath} className="text-xs text-muted-foreground no-underline" style={{ minWidth: '4rem', textAlign: 'right' }}>
@@ -651,30 +695,6 @@ export function Home({ path }: { path?: string }) {
         )}
       </div>
 
-      <div className="flex items-center gap-2 mt-4 mb-2 flex-wrap">
-        <a href="#/calendars/">
-          <Button variant="outline">
-            <span className="material-symbols-outlined">date_range</span> All calendars
-          </Button>
-        </a>
-        <Button variant="outline" onClick={handleCreateCalendar}>
-          <span className="material-symbols-outlined">add</span> New calendar
-        </Button>
-        <Button variant="outline" onClick={handleCreateTaskList}>
-          <span className="material-symbols-outlined">add</span> New task list
-        </Button>
-        <Button variant="outline" onClick={handleCreateDataGrid}>
-          <span className="material-symbols-outlined">add</span> New spreadsheet
-        </Button>
-        <input type="file" ref={icsInputRef} accept=".ics,text/calendar" style={{ display: 'none' }} onChange={handleImportIcs as any} />
-        <Button variant="outline" onClick={() => icsInputRef.current?.click()}>
-          <span className="material-symbols-outlined">upload_file</span> Import .ics
-        </Button>
-        <input type="file" ref={xlsInputRef} accept=".xls,.xlsx,.csv" style={{ display: 'none' }} onChange={handleImportXlsx as any} />
-        <Button variant="outline" onClick={() => xlsInputRef.current?.click()}>
-          <span className="material-symbols-outlined">upload_file</span> Import .xlsx
-        </Button>
-      </div>
       <form
         className="flex items-center gap-2 mb-6"
         onSubmit={(e) => {
@@ -688,17 +708,17 @@ export function Home({ path }: { path?: string }) {
         }}
       >
         <span className="text-xs text-muted-foreground shrink-0">Sync server</span>
-        <input
+        <Input
           type="url"
           placeholder="wss://sync.automerge.org"
           value={wsInput}
           onInput={(e) => setWsInput((e.target as HTMLInputElement).value)}
-          className="border border-border rounded px-2 py-1 text-sm flex-1 max-w-xs"
+          className="flex-1 max-w-xs h-8"
           disabled={wsIsSet}
         />
-        <button type="submit" className="border border-border rounded px-3 py-1 text-sm hover:bg-accent">
+        <Button type="submit" variant="outline" size="sm">
           {wsIsSet ? 'Remove & reload' : 'Set & reload'}
-        </button>
+        </Button>
       </form>
 
       <PresenceLogTable entries={presenceLog} onClear={clearLog} showDocId />
