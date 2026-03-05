@@ -1,8 +1,3 @@
-import { Repo } from '@automerge/automerge-repo';
-import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
-import { MessageChannelNetworkAdapter } from '@automerge/automerge-repo-network-messagechannel';
-
 export type MainToWorker =
   | { type: 'init'; wsUrl: string; port: MessagePort }
   | { type: 'set-ws-url'; wsUrl: string };
@@ -13,8 +8,18 @@ export type WorkerToMain =
   | { type: 'peer-connected'; peerCount: number }
   | { type: 'peer-disconnected'; peerCount: number };
 
-let repo: Repo | null = null;
-let wsAdapter: BrowserWebSocketClientAdapter | null = null;
+// Queue messages that arrive while WASM is initializing
+const pendingMessages: MessageEvent[] = [];
+self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
+
+// Dynamic import so the queue handler above is registered BEFORE WASM top-level await runs
+const { Repo } = await import('@automerge/automerge-repo');
+const { IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb');
+const { BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket');
+const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
+
+let repo: InstanceType<typeof Repo> | null = null;
+let wsAdapter: InstanceType<typeof BrowserWebSocketClientAdapter> | null = null;
 
 function postStatus() {
   const peerCount = repo ? repo.peers.length : 0;
@@ -31,7 +36,7 @@ function setupWebSocket(wsUrl: string) {
   repo.networkSubsystem.addNetworkAdapter(wsAdapter);
 }
 
-self.onmessage = (e: MessageEvent<MainToWorker>) => {
+function handleMessage(e: MessageEvent<MainToWorker>) {
   const msg = e.data;
 
   if (msg.type === 'init') {
@@ -43,7 +48,6 @@ self.onmessage = (e: MessageEvent<MainToWorker>) => {
         storage: new IndexedDBStorageAdapter(),
       });
 
-      // Listen for peer events once on the networkSubsystem
       const ns = repo.networkSubsystem;
       ns.on('peer', postStatus);
       ns.on('peer-disconnected', postStatus);
@@ -61,4 +65,9 @@ self.onmessage = (e: MessageEvent<MainToWorker>) => {
   if (msg.type === 'set-ws-url') {
     setupWebSocket(msg.wsUrl);
   }
-};
+}
+
+// Replace queue handler with real handler and drain
+self.onmessage = handleMessage;
+for (const msg of pendingMessages) handleMessage(msg);
+pendingMessages.length = 0;

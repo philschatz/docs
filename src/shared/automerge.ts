@@ -82,6 +82,12 @@ export async function findDocWithProgress<T>(
   }
 }
 
+// --- Repo network ready promise (resolves when main-thread repo connects to worker peer) ---
+
+let resolveRepoReady: () => void;
+export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
+repo.networkSubsystem.on('peer', () => { resolveRepoReady(); });
+
 // --- Connection status (listens to worker messages) ---
 
 type ConnectionListener = (connected: boolean) => void;
@@ -90,7 +96,9 @@ let workerPeerCount = 0;
 
 worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
   const msg = e.data;
-  if (msg.type === 'error') {
+  if (msg.type === 'ready') {
+    // Worker initialized — peer event on repo.networkSubsystem resolves workerReady
+  } else if (msg.type === 'error') {
     console.error('Automerge worker error:', msg.message);
   } else if (msg.type === 'peer-connected' || msg.type === 'peer-disconnected') {
     workerPeerCount = msg.peerCount;

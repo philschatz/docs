@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
-import { repo, Automerge, Presence, useConnectionStatus, getWsUrl, setWsUrl, findDocWithProgress } from '../../shared/automerge';
+import { repo, Automerge, Presence, useConnectionStatus, getWsUrl, setWsUrl, workerReady } from '../../shared/automerge';
 import type { DocHandle } from '../../shared/automerge';
 import { peerColor } from '../../shared/presence';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
@@ -120,19 +120,17 @@ export function Home({ path }: { path?: string }) {
     if (resolvedIdsRef.current.has(documentId)) return;
     resolvedIdsRef.current.add(documentId);
     try {
-      const resolved = await findDocWithProgress(documentId, (pct) => {
-        setEntries(prev => prev.map(e =>
-          e.documentId === documentId ? { ...e, progress: pct } : e
-        ));
-      });
-      const doc = resolved.doc() as any;
-      if (!doc) return; // entry stays as-is (stale)
+      await workerReady;
+      const handle = await repo.find<any>(documentId as any);
+      if (!handle.isReady()) await handle.whenReady();
+      const doc = handle.doc() as any;
+      if (!doc) return;
       const type = docTypeFromDoc(doc);
       const name = doc.name || '';
       updateDocCache(documentId, { type, name });
       setEntries(prev => prev.map(e =>
         e.documentId === documentId
-          ? { ...e, type, name, handle: resolved, count: docItemCount(doc, type), lastUpdated: getLastChangeTime(doc), progress: null }
+          ? { ...e, type, name, handle, count: docItemCount(doc, type), lastUpdated: getLastChangeTime(doc), progress: null }
           : e
       ));
     } catch {
