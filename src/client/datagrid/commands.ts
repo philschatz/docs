@@ -291,7 +291,7 @@ const clipboardPlugin: GridPlugin = {
       shortcuts: [{ key: 'v', mod: true }],
       isEnabled: s => s.hasSelection,
       execute: (_, ctx) => {
-        const { selectedCell, sortedRowIds, sortedColIds, clipboardRef, mutate,
+        const { selectedCell, clipboardRef, mutate,
           setClipboardSource, setSelectionAnchor, setSelectedCell, currentSheetId } = ctx;
         if (!selectedCell) return;
         const [destCol, destRow] = selectedCell;
@@ -307,26 +307,47 @@ const clipboardPlugin: GridPlugin = {
 
           mutate((d) => {
             const ms = d.sheets[currentSheetId];
+            // Add rows/columns if paste extends beyond the grid
+            const neededRows = destRow + values.length;
+            const neededCols = destCol + (values[0]?.length || 0);
+            const rowEntries = sortedEntries(ms.rows);
+            const colEntries = sortedEntries(ms.columns);
+            if (neededRows > rowEntries.length) {
+              const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
+              for (let i = rowEntries.length; i < neededRows; i++) {
+                ms.rows[shortId()] = { index: lastIdx + (i - rowEntries.length + 1) };
+              }
+            }
+            if (neededCols > colEntries.length) {
+              const lastIdx = colEntries.length > 0 ? colEntries[colEntries.length - 1][1].index : 0;
+              for (let i = colEntries.length; i < neededCols; i++) {
+                ms.columns[shortId()] = { index: lastIdx + (i - colEntries.length + 1), name: '' };
+              }
+            }
+            // Re-read IDs after potential expansion
+            const allRowIds = sortedEntries(ms.rows).map(([id]) => id);
+            const allColIds = sortedEntries(ms.columns).map(([id]) => id);
             for (let dr = 0; dr < values.length; dr++) {
               for (let dc = 0; dc < values[dr].length; dc++) {
                 const r = destRow + dr;
                 const c = destCol + dc;
-                if (r >= freshRowIds.length || c >= freshColIds.length) continue;
                 const val = values[dr][dc];
                 const stored = val.startsWith('=')
-                  ? a1ToInternal(val, r, c, freshRowIds, freshColIds)
+                  ? a1ToInternal(val, r, c, allRowIds, allColIds)
                   : val;
-                setCell(ms.cells, `${freshRowIds[r]}:${freshColIds[c]}`, stored);
+                setCell(ms.cells, `${allRowIds[r]}:${allColIds[c]}`, stored);
               }
             }
             if (mode === 'cut') {
+              const cutRowIds = sortedEntries(ms.rows).map(([id]) => id);
+              const cutColIds = sortedEntries(ms.columns).map(([id]) => id);
               for (let r = srcRange.minRow; r <= srcRange.maxRow; r++) {
                 for (let c = srcRange.minCol; c <= srcRange.maxCol; c++) {
-                  if (r >= freshRowIds.length || c >= freshColIds.length) continue;
+                  if (r >= cutRowIds.length || c >= cutColIds.length) continue;
                   const pasteR = destRow + (r - srcRange.minRow);
                   const pasteC = destCol + (c - srcRange.minCol);
                   if (pasteR === r && pasteC === c) continue;
-                  delete ms.cells[`${freshRowIds[r]}:${freshColIds[c]}`];
+                  delete ms.cells[`${cutRowIds[r]}:${cutColIds[c]}`];
                 }
               }
             }
@@ -335,8 +356,8 @@ const clipboardPlugin: GridPlugin = {
           clipboardRef.current = null;
           setClipboardSource(null);
 
-          const pasteMaxRow = Math.min(destRow + values.length - 1, sortedRowIds.length - 1);
-          const pasteMaxCol = Math.min(destCol + (values[0]?.length || 1) - 1, sortedColIds.length - 1);
+          const pasteMaxRow = destRow + values.length - 1;
+          const pasteMaxCol = destCol + (values[0]?.length || 1) - 1;
           setSelectionAnchor([destCol, destRow]);
           setSelectedCell([pasteMaxCol, pasteMaxRow]);
         } else {
@@ -365,26 +386,43 @@ const clipboardPlugin: GridPlugin = {
             const finalRows = rows;
             mutate((d) => {
               const ms = d.sheets[currentSheetId];
-              const freshRowIds = sortedEntries(ms.rows).map(([id]) => id);
-              const freshColIds = sortedEntries(ms.columns).map(([id]) => id);
+              // Add rows/columns if paste extends beyond the grid
+              const neededRows = destRow + finalRows.length;
+              const maxPasteCols = Math.max(...finalRows.map(r => r.length));
+              const neededCols = destCol + maxPasteCols;
+              const rowEntries = sortedEntries(ms.rows);
+              const colEntries = sortedEntries(ms.columns);
+              if (neededRows > rowEntries.length) {
+                const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
+                for (let i = rowEntries.length; i < neededRows; i++) {
+                  ms.rows[shortId()] = { index: lastIdx + (i - rowEntries.length + 1) };
+                }
+              }
+              if (neededCols > colEntries.length) {
+                const lastIdx = colEntries.length > 0 ? colEntries[colEntries.length - 1][1].index : 0;
+                for (let i = colEntries.length; i < neededCols; i++) {
+                  ms.columns[shortId()] = { index: lastIdx + (i - colEntries.length + 1), name: '' };
+                }
+              }
+              const allRowIds = sortedEntries(ms.rows).map(([id]) => id);
+              const allColIds = sortedEntries(ms.columns).map(([id]) => id);
               for (let dr = 0; dr < finalRows.length; dr++) {
                 for (let dc = 0; dc < finalRows[dr].length; dc++) {
                   const r = destRow + dr;
                   const c = destCol + dc;
-                  if (r >= freshRowIds.length || c >= freshColIds.length) continue;
                   const val = finalRows[dr][dc];
                   const stored = val.startsWith('=')
-                    ? a1ToInternal(val, r, c, freshRowIds, freshColIds)
+                    ? a1ToInternal(val, r, c, allRowIds, allColIds)
                     : val;
-                  setCell(ms.cells, `${freshRowIds[r]}:${freshColIds[c]}`, stored);
+                  setCell(ms.cells, `${allRowIds[r]}:${allColIds[c]}`, stored);
                 }
               }
             });
 
             setClipboardSource(null);
 
-            const pasteMaxRow = Math.min(destRow + rows.length - 1, sortedRowIds.length - 1);
-            const pasteMaxCol = Math.min(destCol + (rows[0]?.length || 1) - 1, sortedColIds.length - 1);
+            const pasteMaxRow = destRow + rows.length - 1;
+            const pasteMaxCol = destCol + (rows[0]?.length || 1) - 1;
             setSelectionAnchor([destCol, destRow]);
             setSelectedCell([pasteMaxCol, pasteMaxRow]);
           })();

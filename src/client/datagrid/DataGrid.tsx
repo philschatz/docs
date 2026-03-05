@@ -23,6 +23,7 @@ import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { registerCustomFunctions } from './hf-functions';
 import { Progress } from '@/components/ui/progress';
+import { addDocId } from '@/doc-storage';
 import './datagrid.css';
 
 registerCustomFunctions();
@@ -249,7 +250,9 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     const hf = hfRef.current;
     if (hf) {
       const hfValue = cellToHfValue(stored || undefined, row, col, sortedRowIds, sortedColIds, sheetNameLookup, sheetRowColLookup);
-      hf.setCellContents({ sheet: hfSheetIndex, col, row }, [[hfValue]]);
+      if (hfSheetIndex < hf.countSheets()) {
+        hf.setCellContents({ sheet: hfSheetIndex, col, row }, [[hfValue]]);
+      }
     }
     setTick(t => t + 1);
   }, [sortedColIds, sortedRowIds, currentSheetId, sheetIdLookup, sheetRowColLookup, sheetNameLookup, hfSheetIndex]);
@@ -525,15 +528,16 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     const maxIndex = Object.values(doc.sheets).reduce((max, s) => Math.max(max, s.index), 0);
     const sheetCount = Object.keys(doc.sheets).length;
     const sid = shortId();
-    mutate((d) => {
+    handleRef.current?.change((d: any) => {
       const cols: Record<string, { index: number; name: string }> = {};
       for (let i = 0; i < 3; i++) cols[shortId()] = { index: i + 1, name: '' };
       const rows: Record<string, { index: number }> = {};
       for (let i = 0; i < 10; i++) rows[shortId()] = { index: i + 1 };
       d.sheets[sid] = { '@type': 'Sheet', name: `Sheet ${sheetCount + 1}`, index: maxIndex + 1, columns: cols, rows, cells: {} } as any;
     });
+    rebuildHyperFormula();
     handleSelectSheet(sid);
-  }, [mutate, handleSelectSheet]);
+  }, [mutate, handleSelectSheet, rebuildHyperFormula]);
 
   const handleRenameSheet = useCallback((id: string, name: string) => {
     mutate((d) => { d.sheets[id].name = name; return false; });
@@ -542,7 +546,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const handleDeleteSheet = useCallback((id: string) => {
     const doc = handleRef.current?.doc();
     if (!doc || Object.keys(doc.sheets).length <= 1) return;
-    mutate((d) => {
+    handleRef.current?.change((d: any) => {
       const rewrites = rewriteFormulasForSheetDeletion(d.sheets as any, id);
       for (const [sheetId, cellUpdates] of Object.entries(rewrites)) {
         for (const [cellKey, newFormula] of Object.entries(cellUpdates)) {
@@ -551,6 +555,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       }
       delete d.sheets[id];
     });
+    rebuildHyperFormula();
     if (id === currentSheetId) {
       const remaining = sortedEntries(handleRef.current!.doc()!.sheets);
       setCurrentSheetId(remaining.length > 0 ? remaining[0][0] : null);
@@ -561,7 +566,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       setSelectedCols(new Set());
       setClipboardSource(null);
     }
-  }, [mutate, currentSheetId]);
+  }, [mutate, currentSheetId, rebuildHyperFormula]);
 
   const handleHideSheet = useCallback((id: string) => {
     const doc = handleRef.current?.doc();
@@ -833,6 +838,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
         setStatus('Document not found.');
         return;
       }
+      addDocId(docId, { type: 'DataGrid', name: doc.name });
       handleRef.current = handle;
       setValidationHandle(handle);
 
@@ -1191,7 +1197,8 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                         const peers = peerCellMap[`${ci}:${ri}`];
                         const refInfo = refHighlightMap.get(`${ci}:${ri}`);
                         const rawValue = currentSheet?.cells[`${rowId}:${colId}`]?.value || '';
-                        const display = getDisplayValue(hf, rawValue, ci, ri, hfSheetIndex);
+                        const safeHfIdx = hf && hfSheetIndex < hf.countSheets() ? hfSheetIndex : undefined;
+                        const display = getDisplayValue(safeHfIdx !== undefined ? hf : null, rawValue, ci, ri, safeHfIdx ?? 0);
                         const inRange = selectionRange && ci >= selectionRange.minCol && ci <= selectionRange.maxCol && ri >= selectionRange.minRow && ri <= selectionRange.maxRow;
                         const inAutofillTarget = autofillTarget && ci >= autofillTarget.minCol && ci <= autofillTarget.maxCol && ri >= autofillTarget.minRow && ri <= autofillTarget.maxRow;
                         const showAutofillHandle = autofillHandleCell && autofillHandleCell[0] === ci && autofillHandleCell[1] === ri && !autofillDragRef.current;

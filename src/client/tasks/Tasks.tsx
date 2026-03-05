@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { addDocId } from '@/doc-storage';
 
 interface EditorState {
   uid: string;
@@ -188,6 +189,7 @@ export function Tasks({ docId }: { docId?: string; path?: string }) {
       if (!mounted) return;
       if (!doc) { setStatus('Document not found. Check the URL.'); return; }
 
+      addDocId(docId, { type: 'TaskList', name: doc.name });
       handleRef.current = handle;
       setValidationHandle(handle);
       setTasks({ ...(doc.tasks || {}) });

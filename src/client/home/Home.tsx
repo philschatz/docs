@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
+import { getDocMap, addDocId, removeDocId, updateDocCache } from '@/doc-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
 
@@ -22,52 +23,6 @@ interface DocEntry {
   count: number | null;
   lastUpdated: number | null;
   progress: number | null;
-}
-
-interface DocCache {
-  type?: DocType;
-  name?: string;
-}
-
-type DocMap = Record<string, DocCache>;
-
-const DOC_STORAGE_KEY = 'automerge-doc-ids';
-
-function getDocMap(): DocMap {
-  try {
-    const raw = JSON.parse(localStorage.getItem(DOC_STORAGE_KEY) || '{}');
-    // Migrate from old array format
-    if (Array.isArray(raw)) {
-      const map: DocMap = {};
-      for (const id of raw) map[id] = {};
-      localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(map));
-      return map;
-    }
-    return raw;
-  } catch { return {}; }
-}
-
-function saveDocMap(map: DocMap) {
-  localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(map));
-}
-
-function addDocId(id: string, cache?: DocCache) {
-  const map = getDocMap();
-  map[id] = cache || map[id] || {};
-  saveDocMap(map);
-}
-
-function removeDocId(id: string) {
-  const map = getDocMap();
-  delete map[id];
-  saveDocMap(map);
-}
-
-function updateDocCache(id: string, cache: DocCache) {
-  const map = getDocMap();
-  if (!(id in map)) return;
-  map[id] = { ...map[id], ...cache };
-  saveDocMap(map);
 }
 
 // Migrate old per-type storage keys into the unified key

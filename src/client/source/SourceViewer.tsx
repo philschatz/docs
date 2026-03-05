@@ -11,6 +11,7 @@ import { ValidationPanel } from '../../shared/ValidationPanel';
 import { hashHistory } from '../hash-history';
 import type { Patch } from '@automerge/automerge';
 import { Progress } from '@/components/ui/progress';
+import { addDocId } from '@/doc-storage';
 import './source-viewer.css';
 
 type Path = (string | number)[];
@@ -262,6 +263,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
         setStatus('Document not found. Check the URL.');
         return;
       }
+      addDocId(docId);
       handleRef.current = handle;
 
       // Show current doc immediately — no getHistory needed

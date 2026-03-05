@@ -14,6 +14,7 @@ import { EventEditor } from './EventEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { Progress } from '@/components/ui/progress';
+import { addDocId } from '@/doc-storage';
 
 
 interface EditorState {
@@ -189,6 +190,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
       if (!mounted) return;
       if (!doc) { setStatus('Document not found. Check the URL.'); return; }
 
+      addDocId(docId, { type: 'Calendar', name: doc.name });
       handleRef.current = handle;
       setValidationHandle(handle);
       eventsRef.current = doc.events || {};
