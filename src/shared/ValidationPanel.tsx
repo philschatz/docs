@@ -43,11 +43,11 @@ export function ValidationPanel({ errors, onClickError, docId, variant = 'light'
   }
 
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 text-sm overflow-hidden mb-2">
-      <div className="px-3 py-2 font-semibold text-amber-700 bg-amber-100/50 border-b border-amber-200">
+    <div className="rounded-lg border border-amber-300 bg-amber-50 text-sm mb-2" style={{ maxHeight: '20rem', display: 'flex', flexDirection: 'column' }}>
+      <div className="px-3 py-2 font-semibold text-amber-700 bg-amber-100/50 border-b border-amber-200 shrink-0">
         {label}
       </div>
-      <ul className="divide-y divide-amber-200 max-h-80 overflow-y-auto">
+      <ul className="divide-y divide-amber-200 overflow-y-auto" style={{ minHeight: 0 }}>
         {errors.map((err, i) => {
           const href = docId ? `/source/${docId}${pathToHash(err.path)}` : undefined;
           return (

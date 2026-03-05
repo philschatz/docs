@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
-import { getDocMap, addDocId, removeDocId, updateDocCache } from '@/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, touchDoc } from '@/doc-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
 
@@ -76,12 +76,11 @@ function iconForType(type: DocType): string {
 }
 
 function initialEntries(): DocEntry[] {
-  const docMap = getDocMap();
-  return Object.keys(docMap).map(id => ({
-    type: (docMap[id].type || 'unknown') as DocType,
-    documentId: id,
+  return getDocList().map(e => ({
+    type: (e.type || 'unknown') as DocType,
+    documentId: e.id,
     handle: null as DocHandle<any> | null,
-    name: docMap[id].name || id.slice(0, 8),
+    name: e.name || e.id.slice(0, 8),
     count: null as number | null,
     lastUpdated: null as number | null,
     progress: 0 as number | null,
@@ -123,19 +122,18 @@ export function Home({ path }: { path?: string }) {
   }, []);
 
   const loadAll = useCallback(() => {
-    const docMap = getDocMap();
-    const ids = Object.keys(docMap);
-    if (ids.length === 0) return;
+    const docList = getDocList();
+    if (docList.length === 0) return;
     // Add entries from cache for any IDs not already in the list
     setEntries(prev => {
       const existing = new Set(prev.map(e => e.documentId));
-      const newEntries = ids
-        .filter(id => !existing.has(id))
-        .map(id => ({
-          type: (docMap[id].type || 'unknown') as DocType,
-          documentId: id,
+      const newEntries = docList
+        .filter(e => !existing.has(e.id))
+        .map(e => ({
+          type: (e.type || 'unknown') as DocType,
+          documentId: e.id,
           handle: null as DocHandle<any> | null,
-          name: docMap[id].name || id.slice(0, 8),
+          name: e.name || e.id.slice(0, 8),
           count: null as number | null,
           lastUpdated: null as number | null,
           progress: 0 as number | null,
@@ -144,7 +142,7 @@ export function Home({ path }: { path?: string }) {
     });
     // Resolve each sequentially, yielding between loads
     (async () => {
-      for (const id of ids) await resolveOne(id);
+      for (const e of docList) await resolveOne(e.id);
     })();
   }, [resolveOne]);
 
@@ -170,17 +168,18 @@ export function Home({ path }: { path?: string }) {
         const name = doc.name || '';
         const type = docTypeFromDoc(doc);
         updateDocCache(entry.documentId, { type, name });
-        setEntries(prev => prev.map(e =>
-          e.documentId === entry.documentId
-            ? {
-                ...e,
-                type,
-                name,
-                count: docItemCount(doc, type),
-                lastUpdated: Date.now(),
-              }
-            : e
-        ));
+        touchDoc(entry.documentId);
+        setEntries(prev => {
+          const updated = prev.map(e =>
+            e.documentId === entry.documentId
+              ? { ...e, type, name, count: docItemCount(doc, type), lastUpdated: Date.now() }
+              : e
+          );
+          // Move changed doc to top
+          const idx = updated.findIndex(e => e.documentId === entry.documentId);
+          if (idx > 0) updated.unshift(updated.splice(idx, 1)[0]);
+          return updated;
+        });
       };
       entry.handle!.on('change', onChange);
       unsubs.push(() => entry.handle!.off('change', onChange));
@@ -498,7 +497,6 @@ export function Home({ path }: { path?: string }) {
 
   const syncOn = isSyncEnabled();
 
-  const sorted = [...entries].sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
 
   return (
     <div>
@@ -569,7 +567,7 @@ export function Home({ path }: { path?: string }) {
       </div>
 
       <div className="flex flex-col">
-        {sorted.map(entry => {
+        {entries.map(entry => {
           const viewPath = viewPathForEntry(entry);
           const icon = iconForType(entry.type);
           return (
@@ -620,7 +618,7 @@ export function Home({ path }: { path?: string }) {
             </div>
           );
         })}
-        {sorted.length === 0 && (
+        {entries.length === 0 && (
           <p className="text-sm text-muted-foreground py-4">No documents yet.</p>
         )}
       </div>
