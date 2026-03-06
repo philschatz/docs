@@ -364,6 +364,8 @@ export function Home({ path }: { path?: string }) {
   }, [reloadEntries]);
 
   const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || (navigator as any).standalone === true;
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -539,10 +541,14 @@ export function Home({ path }: { path?: string }) {
         >
           {syncOn ? 'Disable & reload' : 'Enable & reload'}
         </Button>
-        {installPrompt && (
+        {installPrompt ? (
           <Button variant="outline" size="sm" onClick={handleInstall}>
             <span className="material-symbols-outlined">install_mobile</span> Add to Homescreen
           </Button>
+        ) : !isStandalone && (
+          <span className="text-xs text-muted-foreground">
+            Install: use your browser's <em>"Add to Home screen"</em> or <em>"Install app"</em> menu option
+          </span>
         )}
       </div>
     </div>
