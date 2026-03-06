@@ -3,7 +3,8 @@ import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import { findDocWithProgress } from '../../shared/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
-import { peerColor, initPresence, PresenceBar, type PresenceState } from '../../shared/presence';
+import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { deepAssign } from '../../shared/deep-assign';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { rebuildExpanded, toDateStr } from './recurrence';
@@ -324,31 +325,27 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
   return (
-    <>
-      <div className="flex items-center gap-1 mb-1">
-        <a href="#/" className="inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground">
-          <span className="material-symbols-outlined">arrow_back</span>
-        </a>
-        <a href={`#/source/${docId}`} className="inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground" title="View Source">
-          <span className="material-symbols-outlined">code</span>
-        </a>
-        <input
-          className="border-0 bg-transparent text-xl font-bold outline-none flex-1"
-          value={calName}
-          onFocus={() => { titleFocusedRef.current = true; }}
-          onInput={(e: any) => setCalName(e.currentTarget.value)}
-          onBlur={(e: any) => {
-            titleFocusedRef.current = false;
-            const name = e.currentTarget.value.trim() || 'Calendar';
-            setCalName(name);
-            const handle = handleRef.current;
-            if (handle) {
-              handle.change((d: any) => { d.name = name; });
-              document.title = name + ' - Calendar';
-            }
-          }}
-          onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-        />
+    <div className="calendar-page">
+      <EditorTitleBar
+        icon="calendar_month"
+        title={calName}
+        titleEditable
+        onTitleFocus={() => { titleFocusedRef.current = true; }}
+        onTitleChange={setCalName}
+        onTitleBlur={(value) => {
+          titleFocusedRef.current = false;
+          const name = value.trim() || 'Calendar';
+          setCalName(name);
+          const handle = handleRef.current;
+          if (handle) {
+            handle.change((d: any) => { d.name = name; });
+            document.title = name + ' - Calendar';
+          }
+        }}
+        docId={docId}
+        peers={peerList}
+        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
+      >
         <input
           type="color"
           value={calColor}
@@ -369,7 +366,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
             }
           }}
         />
-      </div>
+      </EditorTitleBar>
       <input
         className="border-0 bg-transparent text-sm text-muted-foreground outline-none w-full"
         placeholder="Add a description..."
@@ -386,10 +383,6 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
           }
         }}
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-      />
-      <PresenceBar
-        peers={peerList}
-        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
       {loadProgress !== null && (
@@ -416,6 +409,6 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
         onFieldFocus={handleFieldFocus}
         peerFocusedFields={peerFocusedFields}
       />
-    </>
+    </div>
   );
 }

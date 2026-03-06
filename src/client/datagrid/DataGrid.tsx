@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { findDocWithProgress } from '../../shared/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
-import { peerColor, initPresence, PresenceBar, type PresenceState } from '../../shared/presence';
+import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import type { PeerFieldInfo } from '../../shared/presence';
 import { usePresenceLog } from '../../shared/PresenceLog';
 import type { DataGridDocument } from './schema';
@@ -89,6 +90,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     range: { minRow: number; maxRow: number; minCol: number; maxCol: number };
   } | null>(null);
 
+  const [addRowCount, setAddRowCount] = useState(10);
   const { attachToPresence } = usePresenceLog();
 
   const [currentSheetId, setCurrentSheetId] = useState<string | null>(null);
@@ -931,12 +933,27 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     return raw.startsWith('=') ? internalToA1(raw, row, col, sortedRowIds, sortedColIds, sheetNameLookup, sheetRowColLookup) : raw;
   }, [selectedCell, currentSheet, sortedRowIds, sortedColIds, sheetNameLookup, sheetRowColLookup]);
 
-  // Cell address label (e.g. "A1")
+  // Cell address label (e.g. "A1", "A1:C3", "2:5", "A:C")
   const cellLabel = useMemo(() => {
+    if (selectedRows.size > 0) {
+      const rows = [...selectedRows].sort((a, b) => a - b);
+      const min = rows[0] + 1;
+      const max = rows[rows.length - 1] + 1;
+      return min === max ? `${min}:${min}` : `${min}:${max}`;
+    }
+    if (selectedCols.size > 0) {
+      const cols = [...selectedCols].sort((a, b) => a - b);
+      const min = colIndexToLetter(cols[0]);
+      const max = colIndexToLetter(cols[cols.length - 1]);
+      return min === max ? `${min}:${min}` : `${min}:${max}`;
+    }
     if (!selectedCell) return '';
     const [col, row] = selectedCell;
+    if (selectionRange && isMultiSelect) {
+      return `${colIndexToLetter(selectionRange.minCol)}${selectionRange.minRow + 1}:${colIndexToLetter(selectionRange.maxCol)}${selectionRange.maxRow + 1}`;
+    }
     return `${colIndexToLetter(col)}${row + 1}`;
-  }, [selectedCell]);
+  }, [selectedCell, selectedRows, selectedCols, selectionRange, isMultiSelect]);
 
   const formulaNames = useMemo(() => {
     try { return HyperFormula.getRegisteredFunctionNames('enGB').sort(); }
@@ -1037,30 +1054,22 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
 
   return (
     <div className="datagrid-page">
-      <div className="flex items-center gap-1 mb-1 px-1">
-        <a href="#/" className="inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground">
-          <span className="material-symbols-outlined">arrow_back</span>
-        </a>
-        <a href={`#/source/${docId}`} className="inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground" title="View Source">
-          <span className="material-symbols-outlined">code</span>
-        </a>
-        <input
-          className="border-0 bg-transparent text-xl font-bold outline-none flex-1"
-          value={gridName}
-          onFocus={() => { titleFocusedRef.current = true; }}
-          onInput={(e: any) => setGridName(e.currentTarget.value)}
-          onBlur={(e: any) => {
-            titleFocusedRef.current = false;
-            const name = e.currentTarget.value.trim() || 'Spreadsheet';
-            setGridName(name);
-            mutate((d) => { d.name = name; return false; });
-            document.title = name + ' - Spreadsheet';
-          }}
-          onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-        />
-      </div>
-
-      <PresenceBar peers={peerList} />
+      <EditorTitleBar
+        icon="grid_on"
+        title={gridName}
+        titleEditable
+        onTitleFocus={() => { titleFocusedRef.current = true; }}
+        onTitleChange={setGridName}
+        onTitleBlur={(value) => {
+          titleFocusedRef.current = false;
+          const name = value.trim() || 'Spreadsheet';
+          setGridName(name);
+          mutate((d) => { d.name = name; return false; });
+          document.title = name + ' - Spreadsheet';
+        }}
+        docId={docId}
+        peers={peerList}
+      />
       <ValidationPanel errors={validationErrors} docId={docId} />
 
       {loadProgress !== null && (
@@ -1340,6 +1349,34 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                 })()}
               </tbody>
             </table>
+            <div className="add-rows-bar">
+              <button
+                className="add-rows-link"
+                onClick={() => {
+                  const count = Math.max(1, Math.min(1000, addRowCount));
+                  if (!currentSheetId) return;
+                  const sid = currentSheetId;
+                  mutate((d) => {
+                    const rowEntries = sortedEntries(d.sheets[sid].rows);
+                    const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
+                    for (let i = 0; i < count; i++) {
+                      d.sheets[sid].rows[shortId()] = { index: lastIdx + i + 1 } as any;
+                    }
+                  });
+                }}
+              >Add</button>
+              {' '}
+              <input
+                type="number"
+                className="add-rows-input"
+                value={addRowCount}
+                min={1}
+                max={1000}
+                onInput={(e: any) => setAddRowCount(parseInt(e.currentTarget.value, 10) || 10)}
+                onKeyDown={(e: any) => e.stopPropagation()}
+              />
+              {' more rows at the bottom'}
+            </div>
           </div>
           </ContextMenuTrigger>
           <CommandContextMenuContent

@@ -3,7 +3,8 @@ import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import { repo } from '../../shared/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
-import { peerColor, initPresence, PresenceBar, type PresenceState } from '../../shared/presence';
+import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { deepAssign } from '../../shared/deep-assign';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { toDateStr } from './recurrence';
@@ -47,9 +48,10 @@ function generateUid() {
 
 function getSavedIds(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem('automerge-doc-ids') || '{}');
-    if (Array.isArray(raw)) return raw;
-    return Object.keys(raw);
+    const raw = JSON.parse(localStorage.getItem('automerge-doc-ids') || '[]');
+    if (!Array.isArray(raw)) return [];
+    // Handle both legacy string[] and new DocEntry[] formats
+    return raw.map((entry: any) => typeof entry === 'string' ? entry : entry.id).filter(Boolean);
   } catch { return []; }
 }
 
@@ -435,29 +437,16 @@ export function AllCalendars({ path }: { path?: string }) {
     };
   }, [openEditor, refreshCalendar, findCalendar]);
 
-  const peerList = useMemo(() => {
-    // Deduplicate peers across calendars by peerId
-    const seen = new Map<string, PeerState<PresenceState>>();
-    for (const peer of Object.values(peerStates)) {
-      const existing = seen.get(peer.peerId);
-      if (!existing || peer.value.focusedField) {
-        seen.set(peer.peerId, peer);
-      }
-    }
-    return [...seen.values()].filter(p => p.value.viewing);
-  }, [peerStates]);
-
   const settingsCal = settingsDocId ? findCalendar(settingsDocId) : null;
 
   return (
-    <>
-      <div className="flex items-center gap-1 mb-1">
-        <a href="#/" className="inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground">
-          <span className="material-symbols-outlined">arrow_back</span>
-        </a>
-        <h1 className="text-xl font-bold flex-1">All Calendars</h1>
-      </div>
-      <div className="flex items-center gap-2 mb-1 flex-wrap">
+    <div className="calendar-page">
+      <EditorTitleBar
+        icon="calendar_month"
+        title="All Calendars"
+        showSourceLink={false}
+      />
+      <div className="flex items-center gap-2 mb-1 flex-wrap px-1">
         {calendars.map(c => (
           <button
             key={c.docId}
@@ -469,10 +458,6 @@ export function AllCalendars({ path }: { path?: string }) {
           </button>
         ))}
       </div>
-      <PresenceBar
-        peers={peerList}
-        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
-      />
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
       <div id="sx-cal" />
       <EventEditor
@@ -510,6 +495,6 @@ export function AllCalendars({ path }: { path?: string }) {
         color={settingsCal?.color || '#039be5'}
         onClose={() => setSettingsDocId(null)}
       />
-    </>
+    </div>
   );
 }

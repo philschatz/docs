@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks'
 import { findDocWithProgress, Automerge } from '../../shared/automerge';
 import type { State } from '@automerge/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
-import { peerColor, initPresence, PresenceBar, type PresenceState } from '../../shared/presence';
+import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
 import type { CalendarDocument } from '../../shared/schemas';
 import { SourceTree } from './SourceTree';
@@ -427,12 +428,13 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
 
   return (
     <div className="viewer">
-      <div className="viewer-header">
-        <a href="#/">&larr;</a>
-        <h1>{docName}</h1>
-      </div>
-
-      <PresenceBar peers={peerList} />
+      <EditorTitleBar
+        icon="code"
+        title={docName}
+        docId={docId}
+        peers={peerList}
+        showSourceLink={false}
+      />
 
       {loadProgress !== null && (
         <Progress className="my-1" value={loadProgress} />

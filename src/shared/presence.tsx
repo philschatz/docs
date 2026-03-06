@@ -1,4 +1,4 @@
-import { Presence, useConnectionStatus, repo } from './automerge';
+import { Presence } from './automerge';
 import type { DocHandle, PeerState } from './automerge';
 
 const PEER_COLORS = [
@@ -61,40 +61,6 @@ export function initPresence<S extends Record<string, any>>(
   };
 }
 
-export function PresenceBar<P extends { peerId: string }>({ peers, peerTitle }: {
-  peers: P[];
-  peerTitle?: (peer: P) => string;
-}) {
-  const connected = useConnectionStatus();
-  return (
-    <div className="flex items-center gap-1 mb-2">
-      <div
-        className="w-2 h-2 rounded-full shrink-0"
-        style={{ backgroundColor: connected ? '#4caf50' : '#f44336' }}
-        title={connected ? `Connected to server\nMy peer ID: ${repo.peerId}` : 'Disconnected from server'}
-      />
-      {peers.length > 0 ? (
-        <>
-          {peers.map(peer => (
-            <div
-              key={peer.peerId}
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: peerColor(peer.peerId) }}
-              title={peerTitle ? peerTitle(peer) : `Peer ${peer.peerId.slice(0, 8)}`}
-            />
-          ))}
-          <span className="text-xs text-muted-foreground ml-0.5">
-            {peers.length} other{peers.length !== 1 ? 's' : ''} online
-          </span>
-        </>
-      ) : (
-        <span className="text-xs text-muted-foreground ml-0.5">
-          {connected ? 'Connected' : 'Disconnected'}
-        </span>
-      )}
-    </div>
-  );
-}
 
 export interface PeerFieldInfo {
   color: string;
