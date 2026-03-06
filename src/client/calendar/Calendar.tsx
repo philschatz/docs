@@ -327,7 +327,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   return (
     <div className="calendar-page">
       <EditorTitleBar
-        icon="calendar_month"
+        icon="date_range"
         title={calName}
         titleEditable
         onTitleFocus={() => { titleFocusedRef.current = true; }}

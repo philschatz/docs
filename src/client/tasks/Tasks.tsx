@@ -263,7 +263,7 @@ export function Tasks({ docId }: { docId?: string; path?: string }) {
   return (
     <>
       <EditorTitleBar
-        icon="task_alt"
+        icon="checklist"
         title={listName}
         titleEditable
         onTitleFocus={() => { titleFocusedRef.current = true; }}

@@ -38,7 +38,7 @@ function viewPathForType(type: DocType, documentId: string): string {
 }
 
 function iconForType(type: DocType): string {
-  if (type === 'Calendar') return 'calendar_month';
+  if (type === 'Calendar') return 'date_range';
   if (type === 'TaskList') return 'checklist';
   if (type === 'DataGrid') return 'grid_on';
   return 'help';
@@ -445,7 +445,7 @@ export function Home({ path }: { path?: string }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent>
             <DropdownMenuItem onSelect={handleCreateCalendar}>
-              <span className="material-symbols-outlined">calendar_month</span> Calendar
+              <span className="material-symbols-outlined">date_range</span> Calendar
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={handleCreateTaskList}>
               <span className="material-symbols-outlined">checklist</span> Task list
@@ -465,7 +465,7 @@ export function Home({ path }: { path?: string }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent>
             <DropdownMenuItem onSelect={() => icsInputRef.current?.click()}>
-              <span className="material-symbols-outlined">calendar_month</span> Import .ics
+              <span className="material-symbols-outlined">date_range</span> Import .ics
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => xlsInputRef.current?.click()}>
               <span className="material-symbols-outlined">grid_on</span> Import .xlsx
