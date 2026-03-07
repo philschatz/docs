@@ -1182,7 +1182,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
           <ContextMenu modal={false} onOpenChange={(open: boolean) => { if (!open) setContextMenu(null); }}>
           <ContextMenuTrigger asChild>
           <div className="datagrid-container" ref={tableRef} tabIndex={0}>
-            <table className="datagrid-table">
+            <table className="datagrid-table" style={{ width: columnDefs.reduce((sum, col, i) => sum + ((resizingCol?.index === i ? resizingCol.width : col.width) || 100), 48) }}>
               <thead>
                 <tr>
                   <th className="datagrid-row-header datagrid-corner-header" />
