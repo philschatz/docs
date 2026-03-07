@@ -4,6 +4,8 @@ import type { State } from '@automerge/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
+import { HistorySlider } from '../../shared/HistorySlider';
+import type { DocumentHistory } from '../../shared/useDocumentHistory';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
 import type { CalendarDocument } from '../../shared/schemas';
 import { SourceTree } from './SourceTree';
@@ -13,6 +15,7 @@ import { hashHistory } from '../hash-history';
 import type { Patch } from '@automerge/automerge';
 import { Progress } from '@/components/ui/progress';
 import { addDocId } from '@/doc-storage';
+import { JqPanel } from './JqPanel';
 import './source-viewer.css';
 
 type Path = (string | number)[];
@@ -171,11 +174,6 @@ function ClipboardInspector() {
       )}
     </div>
   );
-}
-
-function formatTime(ts: number | undefined) {
-  if (!ts) return '';
-  return new Date(ts * 1000).toLocaleString();
 }
 
 function setAtPath(obj: any, path: Path, value: any) {
@@ -392,17 +390,6 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
     setVersion(changeCount - 1);
   };
 
-  const handleSliderInput = (e: any) => {
-    const v = parseInt((e.target as HTMLInputElement).value);
-    const latest = v === changeCount - 1;
-    atLatest.current = latest;
-    // If browsing old versions and history is stale, reload it
-    if (!latest && historyStale.current) {
-      loadHistory();
-    }
-    setVersion(v);
-  };
-
   const handleEdit = (path: Path, value: any) => {
     if (!handleRef.current || !editable) return;
     handleRef.current.change((doc: any) => {
@@ -426,6 +413,24 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
 
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
+  const historyAdapter: DocumentHistory<CalendarDocument> = {
+    active: changeCount > 0,
+    editable,
+    isLatest,
+    version,
+    changeCount,
+    snapshot: null,
+    time: entry?.change.time ?? null,
+    toggleHistory: () => {},
+    onSliderChange: (v: number) => {
+      const latest = v === changeCount - 1;
+      atLatest.current = latest;
+      if (!latest && historyStale.current) loadHistory();
+      setVersion(v);
+    },
+    jumpToLatest,
+  };
+
   return (
     <div className="viewer">
       <EditorTitleBar
@@ -443,34 +448,9 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
 
       {(currentDoc || history.length > 0) && (
         <>
-          <div className="timeline-bar">
-            <span className="version-label">
-              Version {version + 1}{changeCount > 0 ? ` of ${changeCount}` : ''}
-            </span>
-            {changeCount > 1 && (
-              <input
-                type="range"
-                min={0}
-                max={changeCount - 1}
-                value={version}
-                onInput={handleSliderInput}
-              />
-            )}
-          </div>
+          <HistorySlider history={historyAdapter} dismissable={false} />
 
           <>
-            <div className="timeline-meta">
-              {entry && <span>{formatTime(entry.change.time)}</span>}
-              {entry?.change.message && <span>{entry.change.message}</span>}
-              {editable ? (
-                <span className="mode-badge editable">Editing</span>
-              ) : (
-                <>
-                  <span className="mode-badge readonly">Read-only</span>
-                  {!isLatest && <button className="jump-latest" onClick={jumpToLatest}>Jump to latest</button>}
-                </>
-              )}
-            </div>
             <ValidationPanel
               errors={validationErrors}
               variant="dark"
@@ -500,6 +480,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
         </>
       )}
 
+      {snapshot && <JqPanel data={snapshot} />}
       <PatchTable patches={versionPatches} />
       <ClipboardInspector />
       <PresenceLogTable entries={presenceLog} onClear={clearLog} />

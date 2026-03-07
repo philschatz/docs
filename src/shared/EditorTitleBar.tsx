@@ -17,6 +17,8 @@ export function EditorTitleBar<P extends PeerLike>({
   peers = [],
   peerTitle,
   showSourceLink = true,
+  onToggleHistory,
+  historyActive = false,
   children,
 }: {
   icon: string;
@@ -29,6 +31,8 @@ export function EditorTitleBar<P extends PeerLike>({
   peers?: P[];
   peerTitle?: (peer: P) => string;
   showSourceLink?: boolean;
+  onToggleHistory?: () => void;
+  historyActive?: boolean;
   children?: ComponentChildren;
 }) {
   const connected = useConnectionStatus();
@@ -78,6 +82,16 @@ export function EditorTitleBar<P extends PeerLike>({
         >
           {connected ? 'Connected' : 'Disconnected'}
         </span>
+
+        {onToggleHistory && (
+          <button
+            className={`inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground ${historyActive ? 'bg-accent text-accent-foreground' : ''}`}
+            onClick={onToggleHistory}
+            title={historyActive ? 'Close history' : 'Browse history'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>history</span>
+          </button>
+        )}
 
         {showSourceLink && docId && (
           <a

@@ -5,6 +5,8 @@ import { findDocWithProgress } from '../../shared/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
+import { useDocumentHistory } from '../../shared/useDocumentHistory';
+import { HistorySlider } from '../../shared/HistorySlider';
 import { deepAssign } from '../../shared/deep-assign';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { rebuildExpanded, toDateStr } from './recurrence';
@@ -52,6 +54,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   const [validationHandle, setValidationHandle] = useState<DocHandle<CalendarDocument> | null>(null);
   const validationErrors = useDocumentValidation(validationHandle);
   const handleRef = useRef<DocHandle<CalendarDocument> | null>(null);
+  const history = useDocumentHistory(handleRef);
   const eventsRef = useRef<Record<string, CalendarEvent>>({});
   const eventLookupRef = useRef<EventLookupMap>({});
   const currentRangeRef = useRef({ start: '', end: '' });
@@ -78,6 +81,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   }, []);
 
   const saveEvent = useCallback((uid: string, eventData: CalendarEvent) => {
+    if (!history.editable) return;
     const handle = handleRef.current;
     if (!handle) return;
     handle.change((d: any) => {
@@ -97,6 +101,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   }, [refreshCalendar]);
 
   const saveOverride = useCallback((uid: string, recurrenceDate: string, overrideData: any) => {
+    if (!history.editable) return;
     const handle = handleRef.current;
     if (!handle) return;
     handle.change((d: any) => {
@@ -113,6 +118,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   }, [refreshCalendar]);
 
   const deleteEvent = useCallback((uid: string) => {
+    if (!history.editable) return;
     const handle = handleRef.current;
     if (!handle) return;
     handle.change((d: any) => { delete d.events[uid]; });
@@ -322,6 +328,28 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
     };
   }, [docId, openEditor, refreshCalendar]);
 
+  // Swap calendar events when browsing history
+  useEffect(() => {
+    if (!history.active) return;
+    if (history.snapshot) {
+      eventsRef.current = history.snapshot.events || {};
+    } else {
+      eventsRef.current = handleRef.current?.doc()?.events || {};
+    }
+    if (!history.editable) setEditorState(null);
+    refreshCalendar();
+  }, [history.snapshot, history.active, history.editable, refreshCalendar]);
+
+  // Restore live events when exiting history mode
+  useEffect(() => {
+    if (history.active) return;
+    const doc = handleRef.current?.doc();
+    if (doc) {
+      eventsRef.current = doc.events || {};
+      refreshCalendar();
+    }
+  }, [history.active, refreshCalendar]);
+
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
   return (
@@ -329,7 +357,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
       <EditorTitleBar
         icon="date_range"
         title={calName}
-        titleEditable
+        titleEditable={history.editable}
         onTitleFocus={() => { titleFocusedRef.current = true; }}
         onTitleChange={setCalName}
         onTitleBlur={(value) => {
@@ -345,6 +373,8 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
         docId={docId}
         peers={peerList}
         peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
+        onToggleHistory={history.toggleHistory}
+        historyActive={history.active}
       >
         <input
           type="color"
@@ -367,6 +397,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
           }}
         />
       </EditorTitleBar>
+      <HistorySlider history={history} />
       <input
         className="border-0 bg-transparent text-sm text-muted-foreground outline-none w-full"
         placeholder="Add a description..."

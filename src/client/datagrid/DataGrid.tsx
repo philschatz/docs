@@ -20,6 +20,8 @@ import {
 import { FormulaEditor, type FormulaHighlight, isRange } from './FormulaEditor';
 import { SheetTabs } from './SheetTabs';
 import { useUndoRedo } from '../../shared/useUndoRedo';
+import { useDocumentHistory } from '../../shared/useDocumentHistory';
+import { HistorySlider } from '../../shared/HistorySlider';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { registerCustomFunctions } from './hf-functions';
@@ -63,6 +65,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const validationErrors = useDocumentValidation(validationHandle);
   const handleRef = useRef<DocHandle<DataGridDocument> | null>(null);
   const { undo, redo, canUndo, canRedo } = useUndoRedo(handleRef);
+  const history = useDocumentHistory(handleRef);
   const presenceRef = useRef<Presence<PresenceState, DataGridDocument> | null>(null);
   const presenceCleanupRef = useRef<(() => void) | null>(null);
   const hfRef = useRef<HyperFormula | null>(null);
@@ -96,7 +99,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const [currentSheetId, setCurrentSheetId] = useState<string | null>(null);
 
   // Memoize sorted IDs from the current sheet
-  const docState = handleRef.current?.doc();
+  const docState = history.snapshot || handleRef.current?.doc();
   const currentSheet = docState && currentSheetId ? docState.sheets?.[currentSheetId] ?? null : null;
 
   const sortedColIds = useMemo(() => {
@@ -225,9 +228,32 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     }, delay);
   }, [syncHyperFormula]);
 
+  // Rebuild HyperFormula when viewing a historical snapshot (or exiting history)
+  useEffect(() => {
+    const doc = history.snapshot || handleRef.current?.doc();
+    if (!doc?.sheets) return;
+    hfRef.current?.destroy();
+    const order = sortedEntries(doc.sheets);
+    const sheetsData: Record<string, (string | number | boolean | null)[][]> = {};
+    const nameFn = (id: string) => doc.sheets[id]?.name;
+    const rcFn = (id: string) => {
+      const s = doc.sheets[id];
+      if (!s) return undefined;
+      return { rowIds: sortedEntries(s.rows).map(([r]) => r), colIds: sortedEntries(s.columns).map(([c]) => c) };
+    };
+    for (const [, sheet] of order) {
+      const rIds = sortedEntries(sheet.rows).map(([rid]) => rid);
+      const cIds = sortedEntries(sheet.columns).map(([cid]) => cid);
+      sheetsData[sheet.name] = buildSheetData(sheet.cells, rIds, cIds, nameFn, rcFn);
+    }
+    hfRef.current = HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
+    setTick(t => t + 1);
+  }, [history.snapshot, history.active]);
+
   // Single gateway for all document mutations.
   // Callback may return false to skip HyperFormula recomputation (cosmetic-only changes).
   const mutate = useCallback((fn: (doc: DataGridDocument) => boolean | void) => {
+    if (!history.editable) return;
     let needsSync = true;
     handleRef.current?.change((d: any) => {
       const result = fn(d);
@@ -261,6 +287,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
 
   // Start editing a cell
   const startEditing = useCallback((col: number, row: number) => {
+    if (!history.editable) return;
     const doc = handleRef.current?.doc();
     if (!doc || !currentSheetId) return;
     const sh = doc.sheets[currentSheetId];
@@ -990,7 +1017,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   }, [formulaRefHighlights, editingCell]);
 
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
-  const doc = handleRef.current?.doc();
+  const doc = history.snapshot || handleRef.current?.doc();
   const hf = hfRef.current;
 
   const currentRowIndices = useMemo(() => {
@@ -1057,7 +1084,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       <EditorTitleBar
         icon="grid_on"
         title={gridName}
-        titleEditable
+        titleEditable={history.editable}
         onTitleFocus={() => { titleFocusedRef.current = true; }}
         onTitleChange={setGridName}
         onTitleBlur={(value) => {
@@ -1069,7 +1096,10 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
         }}
         docId={docId}
         peers={peerList}
+        onToggleHistory={history.toggleHistory}
+        historyActive={history.active}
       />
+      <HistorySlider history={history} />
       <ValidationPanel errors={validationErrors} docId={docId} />
 
       {loadProgress !== null && (
