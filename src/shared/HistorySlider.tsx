@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'preact/hooks';
 import type { DocumentHistory } from './useDocumentHistory';
 
 function formatTime(ts: number): string {
@@ -11,6 +12,11 @@ function formatTime(ts: number): string {
 }
 
 export function HistorySlider<T>({ history, dismissable = true }: { history: DocumentHistory<T>; dismissable?: boolean }) {
+  const sliderRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (history.active) sliderRef.current?.focus();
+  }, [history.active]);
+
   if (!history.active) return null;
 
   return (
@@ -20,6 +26,7 @@ export function HistorySlider<T>({ history, dismissable = true }: { history: Doc
       </span>
       {history.changeCount > 1 && (
         <input
+          ref={sliderRef}
           type="range"
           className="flex-1 h-1 accent-primary"
           min={0}
