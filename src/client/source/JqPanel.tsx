@@ -39,9 +39,9 @@ export function JqPanel({ data }: { data: any }) {
     }
   }, [data]);
 
-  // Initialize CodeMirror when expanded
+  // Initialize CodeMirror once the container is mounted
   useEffect(() => {
-    if (collapsed || !containerRef.current || viewRef.current) return;
+    if (!containerRef.current || viewRef.current) return;
 
     let cancelled = false;
 
@@ -186,9 +186,9 @@ export function JqPanel({ data }: { data: any }) {
         viewRef.current = null;
       }
     };
-  }, [collapsed]);
+  }, []);
 
-  // Run query when data changes (if panel is open)
+  // Run query when data changes (if results are visible)
   useEffect(() => {
     if (!collapsed && query) {
       executeQuery(query);
@@ -198,44 +198,44 @@ export function JqPanel({ data }: { data: any }) {
   return (
     <div className="presence-log">
       <div className="presence-log-header">
-        <span className="presence-log-toggle" onClick={() => setCollapsed(!collapsed)}>
+        <span className="presence-log-toggle" onClick={() => { setCollapsed(!collapsed); if (collapsed && query) executeQuery(query); }}>
           {collapsed ? '\u25b6' : '\u25bc'}
         </span>
         <strong>jq Query</strong>
+        <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#888' }}>Press Enter to run</span>
+      </div>
+      <div className="presence-log-body" style={{ padding: 0 }}>
+        <div style={{ borderBottom: collapsed ? undefined : '1px solid #333' }}>
+          <div ref={containerRef} style={{ minHeight: 28 }} />
+        </div>
         {!collapsed && (
-          <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#888' }}>Press Enter to run</span>
+          <>
+            {error && (
+              <pre style={{
+                margin: 0, padding: '8px 12px', fontSize: '0.8rem',
+                color: '#e06c75', background: '#1e1e1e', whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+              }}>
+                {error}
+              </pre>
+            )}
+            {result && (
+              <pre style={{
+                margin: 0, padding: '8px 12px', fontSize: '0.8rem',
+                color: '#d4d4d4', background: '#1e1e1e', whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all', maxHeight: '40vh', overflow: 'auto',
+              }}>
+                {result}
+              </pre>
+            )}
+            {!error && !result && (
+              <div style={{ padding: '8px 12px', fontSize: '0.8rem', color: '#666', background: '#1e1e1e' }}>
+                Enter a jq expression and press Enter
+              </div>
+            )}
+          </>
         )}
       </div>
-      {!collapsed && (
-        <div className="presence-log-body" style={{ padding: 0 }}>
-          <div style={{ borderBottom: '1px solid #333' }}>
-            <div ref={containerRef} style={{ minHeight: 28 }} />
-          </div>
-          {error && (
-            <pre style={{
-              margin: 0, padding: '8px 12px', fontSize: '0.8rem',
-              color: '#e06c75', background: '#1e1e1e', whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}>
-              {error}
-            </pre>
-          )}
-          {result && (
-            <pre style={{
-              margin: 0, padding: '8px 12px', fontSize: '0.8rem',
-              color: '#d4d4d4', background: '#1e1e1e', whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all', maxHeight: '40vh', overflow: 'auto',
-            }}>
-              {result}
-            </pre>
-          )}
-          {!error && !result && !collapsed && (
-            <div style={{ padding: '8px 12px', fontSize: '0.8rem', color: '#666', background: '#1e1e1e' }}>
-              Enter a jq expression and press Enter
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

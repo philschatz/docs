@@ -35,7 +35,7 @@ function formatPatchValue(value: unknown): string {
 }
 
 function PatchTable({ patches }: { patches: Patch[] }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className="presence-log">
@@ -128,11 +128,9 @@ function ClipboardInspector() {
           {collapsed ? '\u25b6' : '\u25bc'}
         </span>
         <strong>Clipboard</strong>
-        {!collapsed && (
-          <button style={{ marginLeft: 8, fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }} onClick={read}>
-            Read
-          </button>
-        )}
+        <button style={{ marginLeft: 8, fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }} onClick={() => { read(); setCollapsed(false); }}>
+          Read
+        </button>
       </div>
       {!collapsed && (
         <div className="presence-log-body">
@@ -481,9 +479,9 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       )}
 
       <PatchTable patches={versionPatches} />
+      <PresenceLogTable entries={presenceLog} onClear={clearLog} />
       {snapshot && <JqPanel data={snapshot} />}
       <ClipboardInspector />
-      <PresenceLogTable entries={presenceLog} onClear={clearLog} />
     </div>
   );
 }

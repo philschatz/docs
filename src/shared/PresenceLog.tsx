@@ -92,7 +92,7 @@ export function PresenceLogTable({ entries, onClear, showDocId }: {
   onClear: () => void;
   showDocId?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
