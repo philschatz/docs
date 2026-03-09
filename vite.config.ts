@@ -1,6 +1,7 @@
 import { defineConfig, Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
+import wasm from 'vite-plugin-wasm';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve } from 'path';
 
@@ -56,6 +57,7 @@ export default defineConfig(async () => {
   return {
   base,
   plugins: [
+    wasm(),
     preact(),
     tailwindcss(),
     radixPreactPatchPlugin(),
@@ -92,7 +94,7 @@ export default defineConfig(async () => {
         ],
       },
       devOptions: {
-        enabled: true,
+        enabled: false,
       },
     }),
   ],
@@ -104,6 +106,7 @@ export default defineConfig(async () => {
   },
   worker: {
     format: 'es' as const,
+    plugins: () => [wasm()],
   },
   resolve: {
     alias: {
@@ -120,7 +123,7 @@ export default defineConfig(async () => {
     // Pre-bundling bypasses load() hooks (esbuild doesn't use Vite plugins),
     // so without this exclusion the full 2.4 MB base64 string ends up in the
     // pre-bundled chunk and OOMs the Chromium renderer during dev-mode testing.
-    exclude: ['@automerge/automerge'],
+    exclude: ['@automerge/automerge', '@automerge/automerge-subduction'],
   },
   };
 });

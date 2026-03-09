@@ -38,7 +38,6 @@ export function usePresenceLog() {
       let detail = '';
       if (type === 'snapshot') detail = JSON.stringify(e.state);
       else if (type === 'update') detail = `${e.channel}: ${JSON.stringify(e.value)}`;
-      else if (type === 'pruning') detail = `pruned: ${JSON.stringify(e.pruned)}`;
       else if (type === 'goodbye' || type === 'heartbeat') detail = '';
       addEntry('recv', type, peerId, detail, docId);
     };
@@ -46,7 +45,6 @@ export function usePresenceLog() {
     presence.on('snapshot', logRecv);
     presence.on('goodbye', logRecv);
     presence.on('heartbeat', logRecv);
-    presence.on('pruning', logRecv);
 
     addEntry('sent', 'snapshot', 'self', JSON.stringify(presence.getLocalState()), docId);
 
@@ -55,7 +53,6 @@ export function usePresenceLog() {
       presence.off('snapshot', logRecv);
       presence.off('goodbye', logRecv);
       presence.off('heartbeat', logRecv);
-      presence.off('pruning', logRecv);
     };
   }, [addEntry]);
 

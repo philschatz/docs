@@ -34,11 +34,25 @@ const worker = new Worker(
 
 const channel = new MessageChannel();
 
-// Main-thread repo: ephemeral, no storage, syncs with worker via MessageChannel
+// Main-thread repo: ephemeral, no storage, syncs with worker via MessageChannel.
+// Subduction is handled in the worker; the main-thread repo only relays via MessageChannel.
+// The new automerge-repo requires a subduction instance — provide a no-op stub for the relay repo.
+const noopSubduction = {
+  storage: {},
+  removeSedimentree() {},
+  connectDiscover() {},
+  disconnectAll() {},
+  disconnectFromPeer() {},
+  syncAll() { return Promise.resolve({ entries() { return []; } }); },
+  getBlobs() { return Promise.resolve([]); },
+  addCommit() { return Promise.resolve(undefined); },
+  addFragment() { return Promise.resolve(undefined); },
+};
 export const repo = new Repo({
   network: [new MessageChannelNetworkAdapter(channel.port1)],
   isEphemeral: true,
-});
+  subduction: noopSubduction,
+} as any);
 
 // Send the other port to the worker along with the websocket URL
 worker.postMessage(

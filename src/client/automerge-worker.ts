@@ -27,15 +27,28 @@ const pendingMessages: MessageEvent[] = [];
 self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
 
 // Dynamic import so the queue handler above is registered BEFORE WASM top-level await runs
-const { Repo } = await import('@automerge/automerge-repo');
-const { IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb');
-const { BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket');
-const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
-const Automerge = await import('@automerge/automerge');
+let Repo: any, IndexedDBStorageAdapter: any, MessageChannelNetworkAdapter: any, Automerge: any;
+let BrowserWebSocketClientAdapter: any;
+let subductionModule: any, WebCryptoSigner: any, setupSubduction: any;
+try {
+  ({ Repo } = await import('@automerge/automerge-repo'));
+  ({ IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb'));
+  ({ MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel'));
+  ({ BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket'));
+  Automerge = await import('@automerge/automerge');
+  subductionModule = await import('@automerge/automerge-subduction');
+  WebCryptoSigner = subductionModule.WebCryptoSigner;
+  ({ setupSubduction } = await import('@automerge/automerge-repo-subduction-bridge'));
+} catch (err: any) {
+  console.error('[worker] Failed to load modules:', err);
+  (self as any).postMessage({ type: 'error', message: `Module load failed: ${err?.message || err}` });
+  throw err;
+}
 
 let repo: InstanceType<typeof Repo> | null = null;
-let wsAdapter: InstanceType<typeof BrowserWebSocketClientAdapter> | null = null;
+let subduction: any = null;
 let mcPeerId: string | null = null;
+let wsAdapter: any = null;
 
 function postStatus() {
   // Count only non-MessageChannel peers (i.e. WebSocket server connections)
@@ -45,11 +58,11 @@ function postStatus() {
 }
 
 function setupWebSocket(wsUrl: string) {
+  if (!wsUrl || !repo) return;
+  // Remove old adapter if reconnecting
   if (wsAdapter) {
     wsAdapter.disconnect();
-    wsAdapter = null;
   }
-  if (!wsUrl || !repo) return;
   wsAdapter = new BrowserWebSocketClientAdapter(wsUrl);
   repo.networkSubsystem.addNetworkAdapter(wsAdapter);
 }
@@ -121,7 +134,7 @@ async function setupHomeSubscription(docIds: string[]) {
     presence.start({ initialState: { viewing: true }, heartbeatMs: 5000, peerTtlMs: 15000 });
 
     const getPeerIds = (): string[] => {
-      const states = presence.getPeerStates().getStates();
+      const states = presence.getPeerStates().value;
       return Object.entries(states)
         .filter(([, s]: [string, any]) => s?.value?.viewing)
         .map(([peerId]) => peerId);
@@ -143,7 +156,6 @@ async function setupHomeSubscription(docIds: string[]) {
     // Listen for presence changes
     presence.on('update', sendSummary);
     presence.on('goodbye', sendSummary);
-    presence.on('pruning', sendSummary);
     presence.on('snapshot', sendSummary);
 
     homeCleanups.push(() => {
@@ -161,32 +173,25 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
   if (msg.type === 'init') {
     try {
       const mcAdapter = new MessageChannelNetworkAdapter(msg.port);
+      const signer = await WebCryptoSigner.setup();
+      const storageAdapter = new IndexedDBStorageAdapter();
 
-      // Create repo with storage but WITHOUT the MessageChannel adapter.
-      // This lets IndexedDB load all documents before the peer handshake,
-      // preventing the worker from responding "doc-unavailable" for documents
-      // that are still loading from storage.
+      const result = await setupSubduction({
+        subductionModule,
+        signer,
+        storageAdapter,
+      });
+      subduction = result.subduction;
+
+      // Create repo with Subduction for encrypted sync
       repo = new Repo({
         network: [],
-        storage: new IndexedDBStorageAdapter(),
-      });
+        subduction,
+      } as any);
 
       const ns = repo.networkSubsystem;
       ns.on('peer', postStatus);
       ns.on('peer-disconnected', postStatus);
-
-      if (msg.wsUrl) {
-        setupWebSocket(msg.wsUrl);
-        // Wait for the WebSocket peer to actually connect (not just initialize).
-        // Without this, when the main thread requests a remote document, the
-        // worker's DocSynchronizer only has the main-thread peer (status "wants")
-        // and immediately marks the document unavailable.
-        await new Promise<void>(resolve => {
-          const onPeer = () => { resolve(); ns.off('peer', onPeer); };
-          ns.on('peer', onPeer);
-          setTimeout(() => { ns.off('peer', onPeer); resolve(); }, 5000);
-        });
-      }
 
       // Track the MessageChannel peer so postStatus can exclude it
       ns.on('peer', (p: any) => {
@@ -195,6 +200,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       repo.networkSubsystem.addNetworkAdapter(mcAdapter);
 
       (self as any).postMessage({ type: 'ready' } satisfies WorkerToMain);
+
+      // Connect to server via WebSocket
+      if (msg.wsUrl) {
+        setupWebSocket(msg.wsUrl);
+      }
     } catch (err: any) {
       (self as any).postMessage({ type: 'error', message: err?.message || 'Worker init failed' } satisfies WorkerToMain);
     }

@@ -10,6 +10,7 @@ module.exports = {
       testEnvironment: 'node',
       testTimeout: 15000,
       globalSetup: '<rootDir>/tests/setup.js',
+      setupFiles: ['<rootDir>/tests/setup-subduction.js'],
       roots: ['<rootDir>/src', '<rootDir>/tests'],
       testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
       testPathIgnorePatterns: ['<rootDir>/tests/ui/'],
@@ -23,6 +24,7 @@ module.exports = {
       moduleNameMapper: {
         '^@automerge/automerge/slim$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
         '^@automerge/automerge/slim/next$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
+        '^@automerge/automerge-repo-subduction-bridge$': '<rootDir>/tests/subduction-bridge-shim.js',
       },
     },
     // UI component tests (jsdom environment)

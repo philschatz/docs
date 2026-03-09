@@ -37,10 +37,9 @@ export function initPresence<S extends Record<string, any>>(
     peerTtlMs: 15000,
   });
 
-  const update = () => onPeersChange({ ...presence.getPeerStates().getStates() });
+  const update = () => onPeersChange({ ...presence.getPeerStates().value });
   presence.on('update', update);
   presence.on('goodbye', update);
-  presence.on('pruning', update);
   presence.on('snapshot', update);
 
   const onVisibility = () => {
