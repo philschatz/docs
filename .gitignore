@@ -43,3 +43,4 @@ cypress/screenshots/
 *.tmp
 test.ics
 test-parser.js
+data-backup.zip

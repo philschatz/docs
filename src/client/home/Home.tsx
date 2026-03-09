@@ -113,8 +113,10 @@ export function Home({ path }: { path?: string }) {
   }, []);
 
   const handleCreateCalendar = async () => {
+    const name = prompt('Calendar name:', 'Untitled');
+    if (name === null) return;
     await workerReady;
-    const handle = repo.create({ '@type': 'Calendar', name: 'Untitled', events: {} });
+    const handle = repo.create({ '@type': 'Calendar', name: name || 'Untitled', events: {} });
     addDocId(handle.documentId);
     setMessage('Calendar created');
     setError('');
@@ -122,8 +124,10 @@ export function Home({ path }: { path?: string }) {
   };
 
   const handleCreateTaskList = async () => {
+    const name = prompt('Task list name:', 'Untitled');
+    if (name === null) return;
     await workerReady;
-    const handle = repo.create({ '@type': 'TaskList', name: 'Untitled', tasks: {} });
+    const handle = repo.create({ '@type': 'TaskList', name: name || 'Untitled', tasks: {} });
     addDocId(handle.documentId);
     setMessage('Task list created');
     setError('');
@@ -131,6 +135,8 @@ export function Home({ path }: { path?: string }) {
   };
 
   const handleCreateDataGrid = async () => {
+    const name = prompt('Spreadsheet name:', 'Untitled');
+    if (name === null) return;
     await workerReady;
     const sid = () => Math.random().toString(36).slice(2, 10);
     const sheetId = sid();
@@ -138,7 +144,7 @@ export function Home({ path }: { path?: string }) {
     for (let i = 1; i <= 10; i++) rows[sid()] = { index: i };
     const handle = repo.create({
       '@type': 'DataGrid',
-      name: 'Untitled',
+      name: name || 'Untitled',
       sheets: {
         [sheetId]: {
           '@type': 'Sheet',
