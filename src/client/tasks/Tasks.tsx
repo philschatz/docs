@@ -8,6 +8,7 @@ import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
 import { deepAssign } from '../../shared/deep-assign';
+import { getDocEntry, updateDocCache } from '../doc-storage';
 import type { TaskDocument, Task } from './schema';
 import { TaskEditor } from './TaskEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
@@ -308,6 +309,9 @@ export function Tasks({ docId }: { docId?: string; path?: string }) {
         peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
+        khDocId={getDocEntry(docId!)?.khDocId}
+        sharingGroupId={getDocEntry(docId!)?.sharingGroupId}
+        onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
       />
       <HistorySlider history={history} />
       <input

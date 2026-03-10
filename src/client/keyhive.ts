@@ -25,9 +25,9 @@ import type {
   ContactCard,
   Identifier,
   DocumentId as KhDocumentId,
-  ChangeRef,
+  ChangeId,
   Encrypted,
-  SimpleCapability,
+  Membership,
   Summary,
 } from '@keyhive/keyhive';
 
@@ -124,7 +124,7 @@ function handleEvent(event: KhEvent) {
 async function persistArchive() {
   if (!kh) return;
   try {
-    const archive = kh.toArchive();
+    const archive = await kh.toArchive();
     const bytes = archive.toBytes();
     await idbSet(ARCHIVE_KEY, bytesToBase64(bytes));
   } catch (err) {
@@ -166,26 +166,29 @@ export async function init(mod: typeof import('@keyhive/keyhive')): Promise<void
   // Create ciphertext store (in-memory; encrypted content lives in automerge docs)
   const store = mod.CiphertextStore.newInMemory();
 
-  // Try restoring from archive
+  // Try restoring from archive (may fail if archive format changed between versions)
   const archived = await idbGet(ARCHIVE_KEY);
-  if (archived) {
+  if (archived && archived.length > 10) {
     try {
       const archive = new mod.Archive(base64ToBytes(archived));
-      kh = archive.tryToKeyhive(store, signer, handleEvent);
+      kh = await archive.tryToKeyhive(store, signer, handleEvent);
     } catch (err) {
       console.warn('[keyhive] Failed to restore archive, creating fresh instance:', err);
+      // Clear stale archive and group to avoid repeated failures
+      await idbSet(ARCHIVE_KEY, '');
+      await idbSet(USER_GROUP_KEY, '');
       kh = await mod.Keyhive.init(signer, store, handleEvent);
     }
   } else {
     kh = await mod.Keyhive.init(signer, store, handleEvent);
   }
 
-  // Create or restore user group
+  // Create or restore user group (for device management / identity)
   const groupIdStr = await idbGet(USER_GROUP_KEY);
-  if (groupIdStr) {
+  if (groupIdStr && groupIdStr.length > 10) {
     try {
       const id = new mod.Identifier(base64ToBytes(groupIdStr));
-      userGroup = kh.getGroup(id) || null;
+      userGroup = (await kh.getGroup(id as any)) || null;
     } catch {
       userGroup = null;
     }
@@ -241,7 +244,7 @@ export function deviceIdentifier(): Identifier | null {
 export async function createProtectedDoc(initialChangeRef: Uint8Array): Promise<KhDocument> {
   const kh = getKeyhive();
   const mod = getModule();
-  const ref = new mod.ChangeRef(initialChangeRef);
+  const ref = new mod.ChangeId(initialChangeRef);
   return kh.generateDocument([], ref, []);
 }
 
@@ -254,8 +257,8 @@ export async function encrypt(
 ): Promise<{ ciphertext: Uint8Array; nonce: Uint8Array; pcsKeyHash: Uint8Array; contentRef: Uint8Array; predRefsBytes: Uint8Array }> {
   const kh = getKeyhive();
   const mod = getModule();
-  const ref = new mod.ChangeRef(contentRef);
-  const preds = predRefs.map(p => new mod.ChangeRef(p));
+  const ref = new mod.ChangeId(contentRef);
+  const preds = predRefs.map(p => new mod.ChangeId(p));
   const result = await kh.tryEncrypt(doc, ref, preds, content);
   const encrypted = result.encrypted_content();
   return {
@@ -268,7 +271,7 @@ export async function encrypt(
 }
 
 /** Decrypt content from a document. */
-export function decrypt(doc: KhDocument, encrypted: Encrypted): Uint8Array {
+export async function decrypt(doc: KhDocument, encrypted: Encrypted): Promise<Uint8Array> {
   const kh = getKeyhive();
   return kh.tryDecrypt(doc, encrypted);
 }
@@ -313,21 +316,21 @@ export async function changeRole(
 }
 
 /** Get all members and their roles for a document. */
-export function getDocMembers(docId: KhDocumentId): SimpleCapability[] {
+export async function getDocMembers(docId: KhDocumentId): Promise<Membership[]> {
   const kh = getKeyhive();
   return kh.docMemberCapabilities(docId);
 }
 
 /** Get this device's access level for a document. */
-export function getMyAccess(docId: KhDocumentId): string | null {
+export async function getMyAccess(docId: KhDocumentId): Promise<string | null> {
   const kh = getKeyhive();
   const id = new (getModule().Identifier)(kh.id.bytes);
-  const access = kh.accessForDoc(id, docId);
+  const access = await kh.accessForDoc(id, docId);
   return access ? access.toString() : null;
 }
 
 /** List all documents this device can access. */
-export function listAccessibleDocs(): Summary[] {
+export async function listAccessibleDocs(): Promise<Summary[]> {
   const kh = getKeyhive();
   return kh.reachableDocs();
 }
@@ -346,7 +349,7 @@ export async function receiveContactCard(json: string): Promise<Agent> {
   const kh = getKeyhive();
   const mod = getModule();
   const card = mod.ContactCard.fromJson(json);
-  const individual = kh.receiveContactCard(card);
+  const individual = await kh.receiveContactCard(card);
   await persistArchive();
   return individual.toAgent();
 }
@@ -371,17 +374,17 @@ export async function generateInvite(
 
   // Receive the invite's contact card in our main keyhive
   const kh = getKeyhive();
-  const inviteIndividual = kh.receiveContactCard(inviteCard);
+  const inviteIndividual = await kh.receiveContactCard(inviteCard);
   const inviteAgent = inviteIndividual.toAgent();
 
-  // Grant the invite key access to the document
+  // Grant the invite key access directly to the document
   const accessLevel = mod.Access.tryFromString(role);
   if (!accessLevel) throw new Error(`Invalid role: ${role}`);
-  await kh.addMember(inviteAgent, doc.toAgent() as any, accessLevel, []);
+  await kh.addMember(inviteAgent, doc.toMembered(), accessLevel, []);
   await persistArchive();
 
   return {
-    inviteKeyBytes: inviteSigner.verifyingKey, // TODO: need secret key bytes
+    inviteKeyBytes: inviteSigner.verifyingKey,
     inviteAgent,
   };
 }

@@ -110,6 +110,16 @@ export function changeRole(agentId: string, docId: string, newRole: string): Pro
 }
 
 /** Generate an invite link for a document. Returns data for URL encoding. */
-export function generateInvite(docId: string, role: string): Promise<{ inviteKeyBytes: number[]; inviteAgentId: string }> {
-  return request('kh-generate-invite', { docId, role });
+export function generateInvite(docId: string, groupId: string, role: string): Promise<{ inviteKeyBytes: number[]; inviteAgentId: string; groupId: string }> {
+  return request('kh-generate-invite', { docId, groupId, role });
+}
+
+/** Enable sharing on a document by creating a keyhive Document. Returns the keyhive doc ID and sharing group ID. */
+export function enableSharing(): Promise<{ khDocId: string; groupId: string }> {
+  return request('kh-enable-sharing');
+}
+
+/** Register a previously-created sharing group so the worker can find it after reload. */
+export function registerSharingGroup(khDocId: string, groupId: string): Promise<void> {
+  return request('kh-register-sharing-group', { khDocId, groupId });
 }

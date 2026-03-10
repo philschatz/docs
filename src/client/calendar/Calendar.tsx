@@ -8,6 +8,7 @@ import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { deepAssign } from '../../shared/deep-assign';
+import { getDocEntry, updateDocCache } from '../doc-storage';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { rebuildExpanded, toDateStr } from './recurrence';
 import { mapToSXEvents, createSXCalendar } from './schedule-x';
@@ -375,6 +376,9 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
         peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
+        khDocId={getDocEntry(docId!)?.khDocId}
+        sharingGroupId={getDocEntry(docId!)?.sharingGroupId}
+        onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
       >
         <input
           type="color"

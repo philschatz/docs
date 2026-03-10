@@ -26,7 +26,7 @@ import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { registerCustomFunctions } from './hf-functions';
 import { Progress } from '@/components/ui/progress';
-import { addDocId } from '@/doc-storage';
+import { addDocId, getDocEntry, updateDocCache } from '@/doc-storage';
 import './datagrid.css';
 
 registerCustomFunctions();
@@ -1102,6 +1102,9 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
         peers={peerList}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
+        khDocId={getDocEntry(docId!)?.khDocId}
+        sharingGroupId={getDocEntry(docId!)?.sharingGroupId}
+        onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
       />
       <HistorySlider history={history} />
       <ValidationPanel errors={validationErrors} docId={docId} />

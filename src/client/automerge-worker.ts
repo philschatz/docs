@@ -22,8 +22,10 @@ export type MainToWorker =
   | { type: 'kh-add-member'; id: number; agentId: string; docId: string; role: string }
   | { type: 'kh-revoke-member'; id: number; agentId: string; docId: string }
   | { type: 'kh-change-role'; id: number; agentId: string; docId: string; newRole: string }
-  | { type: 'kh-generate-invite'; id: number; docId: string; role: string }
-  | { type: 'kh-list-devices'; id: number };
+  | { type: 'kh-generate-invite'; id: number; docId: string; groupId: string; role: string }
+  | { type: 'kh-list-devices'; id: number }
+  | { type: 'kh-enable-sharing'; id: number }
+  | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string };
 
 export type WorkerToMain =
   | { type: 'ready' }
@@ -69,6 +71,12 @@ function errMsg(err: any): string {
   return err.message || String(err);
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -78,6 +86,8 @@ function base64ToBytes(b64: string): Uint8Array {
 
 let repo: InstanceType<typeof Repo> | null = null;
 let subduction: any = null;
+// Maps khDocId (base64) → keyhive Document object (needed for addMember's other_relevant_docs).
+const khDocuments = new Map<string, any>();
 let mcPeerId: string | null = null;
 let wsAdapter: any = null;
 
@@ -274,9 +284,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (!keyhiveApi) throw new Error('Keyhive not available');
       const id = keyhiveApi.deviceId();
       const group = keyhiveApi.getUserGroup();
-      const members = group.members;
-      const devices = members.map(m => ({
-        id: m.who.id.toBytes(),
+      const members = await group.members();
+      const devices = members.map((m: any) => ({
+        agentId: m.who.toString(),
         role: m.can.toString(),
         isMe: m.who.toString() === keyhiveApi!.getKeyhive().idString,
       }));
@@ -311,8 +321,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (!keyhiveApi) throw new Error('Keyhive not available');
       const mod = keyhiveApi.getModule();
       const docId = new mod.DocumentId(base64ToBytes(msg.khDocId));
-      const members = keyhiveApi.getDocMembers(docId);
-      const result = members.map(m => ({
+      const members = await keyhiveApi.getDocMembers(docId);
+      const result = members.map((m: any) => ({
         agentId: m.who.toString(),
         role: m.can.toString(),
         isIndividual: m.who.isIndividual(),
@@ -329,7 +339,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (!keyhiveApi) throw new Error('Keyhive not available');
       const mod = keyhiveApi.getModule();
       const docId = new mod.DocumentId(base64ToBytes(msg.khDocId));
-      const access = keyhiveApi.getMyAccess(docId);
+      const access = await keyhiveApi.getMyAccess(docId);
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: access } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -340,12 +350,77 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!keyhiveApi) throw new Error('Keyhive not available');
       const group = keyhiveApi.getUserGroup();
-      const members = group.members;
-      const devices = members.map(m => ({
+      const members = await group.members();
+      const devices = members.map((m: any) => ({
         agentId: m.who.toString(),
         role: m.can.toString(),
       }));
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: devices } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'kh-enable-sharing') {
+    try {
+      if (!keyhiveApi) throw new Error('Keyhive not available');
+      const mod = keyhiveApi.getModule();
+      const kh = keyhiveApi.getKeyhive();
+      // Create a keyhive Document (no coparents — we own it directly)
+      const ref = new mod.ChangeId(new Uint8Array(32));
+      const doc = await kh.generateDocument([], ref, []);
+      const khDocId = bytesToBase64(doc.id.toBytes());
+      // Track the Document so kh-generate-invite can reference it
+      khDocuments.set(khDocId, doc);
+      await keyhiveApi.persistArchive();
+      console.log('[kh-enable-sharing] doc created, khDocId:', khDocId);
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { khDocId, groupId: '' } } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'kh-generate-invite') {
+    try {
+      if (!keyhiveApi) throw new Error('Keyhive not available');
+      const mod = keyhiveApi.getModule();
+      const kh = keyhiveApi.getKeyhive();
+      // Find the keyhive Document
+      const doc = khDocuments.get(msg.docId);
+      if (!doc) throw new Error('Document not found. Re-enable sharing.');
+      // Generate an ephemeral invite signer
+      const inviteSigner = mod.Signer.generateMemory();
+      const store = mod.CiphertextStore.newInMemory();
+      const tempKh = await mod.Keyhive.init(inviteSigner, store, () => {});
+      const inviteCard = await tempKh.contactCard();
+      const inviteIndividual = await kh.receiveContactCard(inviteCard);
+      const inviteAgent = inviteIndividual.toAgent();
+      // Grant invite access directly to the document
+      const access = mod.Access.tryFromString(msg.role);
+      if (!access) throw new Error(`Invalid role: ${msg.role}`);
+      await kh.addMember(inviteAgent, doc.toMembered(), access, []);
+      await keyhiveApi.persistArchive();
+      const keyBytes = Array.from(inviteSigner.verifyingKey);
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { inviteKeyBytes: keyBytes, inviteAgentId: inviteAgent.toString(), groupId: '' } } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'kh-register-sharing-group') {
+    try {
+      if (!keyhiveApi) throw new Error('Keyhive not available');
+      const mod = keyhiveApi.getModule();
+      const kh = keyhiveApi.getKeyhive();
+      // Restore the keyhive Document object into our in-memory map after reload.
+      if (!khDocuments.has(msg.khDocId)) {
+        const docId = new mod.DocumentId(base64ToBytes(msg.khDocId));
+        const doc = await kh.getDocument(docId);
+        if (doc) {
+          khDocuments.set(msg.khDocId, doc);
+        }
+      }
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: true } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }

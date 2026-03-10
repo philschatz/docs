@@ -43,6 +43,40 @@ function automergeWasmPlugin(): Plugin {
   };
 }
 
+// The keyhive npm package uses wasm-bindgen's ESM integration:
+//   import * as wasm from "./keyhive_wasm_bg.wasm";
+// This requires the bundler to wire WASM imports from the bg.js glue code,
+// which vite-plugin-wasm doesn't handle correctly in web workers.
+// Instead, we fetch the WASM binary and instantiate it manually with the
+// proper import object from the bg.js glue code.
+function keyhiveWasmPlugin(): Plugin {
+  return {
+    name: 'keyhive-wasm',
+    load(id) {
+      if (id.includes('@keyhive/keyhive') && id.endsWith('keyhive_wasm.js')) {
+        return `
+          import wasmUrl from "./keyhive_wasm_bg.wasm?url";
+          import * as bg from "./keyhive_wasm_bg.js";
+          const imports = { "./keyhive_wasm_bg.js": bg };
+          const wasmResponse = await fetch(wasmUrl);
+          const { instance } = await WebAssembly.instantiateStreaming(wasmResponse, imports);
+          bg.__wbg_set_wasm(instance.exports);
+          instance.exports.__wbindgen_start();
+          export {
+            Access, Agent, Archive, CannotParseEd25519SigningKey, CannotParseIdentifier,
+            Capability, CgkaOperation, ChangeId, CiphertextStore, ContactCard, Delegation,
+            DocContentRefs, Document, DocumentId, Encrypted, EncryptedContentWithUpdate,
+            Event, GenerateWebCryptoError, Group, GroupId, History, Identifier, Individual,
+            IndividualId, Invocation, Keyhive, Membered, Membership, Peer, Revocation,
+            ShareKey, Signed, SignedCgkaOperation, SignedDelegation, SignedInvocation,
+            SignedRevocation, Signer, Stats, Summary, setPanicHook
+          } from "./keyhive_wasm_bg.js";
+        `;
+      }
+    },
+  };
+}
+
 export default defineConfig(async () => {
   const istanbulPlugins = process.env.CYPRESS_COVERAGE
     ? [(await import('vite-plugin-istanbul')).default({
@@ -62,6 +96,7 @@ export default defineConfig(async () => {
     tailwindcss(),
     radixPreactPatchPlugin(),
     automergeWasmPlugin(),
+    keyhiveWasmPlugin(),
     ...istanbulPlugins,
     VitePWA({
       registerType: 'autoUpdate',
@@ -106,7 +141,7 @@ export default defineConfig(async () => {
   },
   worker: {
     format: 'es' as const,
-    plugins: () => [wasm()],
+    plugins: () => [wasm(), keyhiveWasmPlugin()],
   },
   resolve: {
     alias: {

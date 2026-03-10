@@ -24,9 +24,13 @@ interface AccessControlProps {
   docId: string;
   /** Auth companion document ID (for invite URL construction). */
   authDocId?: string;
+  /** Sharing group ID (base64-encoded). */
+  sharingGroupId?: string;
+  /** Called when group ID changes (e.g. recreated after reload). */
+  onGroupIdChange?: (groupId: string) => void;
 }
 
-export function AccessControl({ khDocId, docId, authDocId }: AccessControlProps) {
+export function AccessControl({ khDocId, docId, authDocId, sharingGroupId, onGroupIdChange }: AccessControlProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
@@ -35,7 +39,7 @@ export function AccessControl({ khDocId, docId, authDocId }: AccessControlProps)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isAdmin = myAccess === 'admin';
+  const isAdmin = myAccess?.toLowerCase() === 'admin';
 
   const refresh = useCallback(async () => {
     if (!khDocId) return;
@@ -87,7 +91,11 @@ export function AccessControl({ khDocId, docId, authDocId }: AccessControlProps)
     setLoading(true);
     setInviteUrl(null);
     try {
-      const result = await generateInvite(khDocId, inviteRole);
+      const result = await generateInvite(khDocId, sharingGroupId || '', inviteRole);
+      // Persist updated groupId if it was recreated
+      if (result.groupId && result.groupId !== sharingGroupId) {
+        onGroupIdChange?.(result.groupId);
+      }
       const keyB64 = btoa(String.fromCharCode(...result.inviteKeyBytes))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       const base = window.location.origin + window.location.pathname;

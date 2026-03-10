@@ -10,6 +10,8 @@ interface DocEntry {
   authDocId?: string;
   /** Keyhive document ID (base64-encoded bytes) for encryption/decryption. */
   khDocId?: string;
+  /** Keyhive sharing group ID (base64-encoded). Needed to restore after reload. */
+  sharingGroupId?: string;
   /** For migration: the original unencrypted doc ID that was migrated. */
   legacyDocId?: string;
 }
@@ -58,6 +60,10 @@ export function touchDoc(id: string) {
   if (idx <= 0) return; // not found or already first
   list.unshift(list.splice(idx, 1)[0]);
   saveDocList(list);
+}
+
+export function getDocEntry(id: string): DocEntry | undefined {
+  return getDocList().find(e => e.id === id);
 }
 
 export function updateDocCache(id: string, cache: Omit<DocEntry, 'id'>) {
