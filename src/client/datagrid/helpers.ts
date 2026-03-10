@@ -172,6 +172,18 @@ export function getDisplayValue(hf: { getCellValue(addr: { sheet: number; col: n
   return rawValue;
 }
 
+/** Format a distribution cell display: "mean ±stdev". */
+export function formatDistValue(mean: number, stdev: number): string {
+  const fmt = (n: number) => {
+    if (Number.isInteger(n) && Math.abs(n) < 1e6) return String(n);
+    if (Math.abs(n) < 0.01 && n !== 0) return n.toExponential(1);
+    // Use at most 4 significant figures
+    const s = n.toPrecision(4);
+    return s.replace(/\.?0+$/, '');
+  };
+  return `${fmt(mean)} ±${fmt(stdev)}`;
+}
+
 export function shortId(): string {
   return Math.random().toString(36).slice(2, 10);
 }

@@ -1,5 +1,6 @@
 /**
- * Custom HyperFormula function plugins for CONCAT, SORT, and UNIQUE.
+ * Custom HyperFormula function plugins for CONCAT, SORT, UNIQUE,
+ * and probability distribution functions (NORMAL, UNIFORM, etc.).
  *
  * ARRAYFORMULA is already built-in and doesn't need a custom implementation.
  */
@@ -10,9 +11,29 @@ import HyperFormula, {
   ArraySize,
   EmptyValue,
 } from 'hyperformula';
+import { distributionMean, type DistributionInfo } from './distributions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type CellValue = any;
+
+// ---------------------------------------------------------------------------
+// Distribution registry — populated during HyperFormula evaluation.
+// Maps "sheet:col:row" → DistributionInfo for cells containing distribution
+// functions (NORMAL, UNIFORM, etc.). The MC engine reads this to know which
+// cells to sample.
+// ---------------------------------------------------------------------------
+
+const distRegistry = new Map<string, DistributionInfo>();
+
+/** Get a snapshot of the distribution registry (called by MC engine). */
+export function getDistributionRegistry(): ReadonlyMap<string, DistributionInfo> {
+  return distRegistry;
+}
+
+/** Clear registry before a full HyperFormula re-evaluation. */
+export function clearDistributionRegistry() {
+  distRegistry.clear();
+}
 
 // ---------------------------------------------------------------------------
 // CONCAT — concatenates ranges/scalars without a delimiter (Excel/Sheets compat)
@@ -227,6 +248,106 @@ function uniqueColumns(range: SimpleRangeValue, exactlyOnce: boolean): SimpleRan
 }
 
 // ---------------------------------------------------------------------------
+// Distribution functions — NORMAL, UNIFORM, TRIANGULAR, PERT, LOGNORMAL
+//
+// Each function returns the analytical mean for normal HyperFormula evaluation
+// and registers itself in the distribution registry so the Monte Carlo engine
+// can sample it during simulation runs.
+// ---------------------------------------------------------------------------
+
+class DistributionPlugin extends FunctionPlugin {
+  static implementedFunctions = {
+    'NORMAL': {
+      method: 'normal',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'UNIFORM': {
+      method: 'uniform',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'TRIANGULAR': {
+      method: 'triangular',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'PERT': {
+      method: 'pert',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'LOGNORMAL': {
+      method: 'lognormal',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+  };
+
+  private register(state: any, type: string, params: number[]) {
+    const addr = state.formulaAddress;
+    distRegistry.set(`${addr.sheet}:${addr.col}:${addr.row}`, { type, params });
+  }
+
+  normal(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('NORMAL'),
+      (mean: number, stdev: number) => {
+        this.register(state, 'normal', [mean, stdev]);
+        return distributionMean({ type: 'normal', params: [mean, stdev] });
+      },
+    );
+  }
+
+  uniform(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('UNIFORM'),
+      (min: number, max: number) => {
+        this.register(state, 'uniform', [min, max]);
+        return distributionMean({ type: 'uniform', params: [min, max] });
+      },
+    );
+  }
+
+  triangular(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('TRIANGULAR'),
+      (min: number, mode: number, max: number) => {
+        this.register(state, 'triangular', [min, mode, max]);
+        return distributionMean({ type: 'triangular', params: [min, mode, max] });
+      },
+    );
+  }
+
+  pert(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('PERT'),
+      (min: number, mode: number, max: number) => {
+        this.register(state, 'pert', [min, mode, max]);
+        return distributionMean({ type: 'pert', params: [min, mode, max] });
+      },
+    );
+  }
+
+  lognormal(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('LOGNORMAL'),
+      (mu: number, sigma: number) => {
+        this.register(state, 'lognormal', [mu, sigma]);
+        return distributionMean({ type: 'lognormal', params: [mu, sigma] });
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -238,4 +359,13 @@ export function registerCustomFunctions() {
   HyperFormula.registerFunctionPlugin(ConcatPlugin, { enGB: { CONCAT: 'CONCAT' } });
   HyperFormula.registerFunctionPlugin(SortPlugin, { enGB: { SORT: 'SORT' } });
   HyperFormula.registerFunctionPlugin(UniquePlugin, { enGB: { UNIQUE: 'UNIQUE' } });
+  HyperFormula.registerFunctionPlugin(DistributionPlugin, {
+    enGB: {
+      NORMAL: 'NORMAL',
+      UNIFORM: 'UNIFORM',
+      TRIANGULAR: 'TRIANGULAR',
+      PERT: 'PERT',
+      LOGNORMAL: 'LOGNORMAL',
+    },
+  });
 }

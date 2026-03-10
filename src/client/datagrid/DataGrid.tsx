@@ -24,7 +24,10 @@ import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
-import { registerCustomFunctions } from './hf-functions';
+import { registerCustomFunctions, clearDistributionRegistry } from './hf-functions';
+import { runMonteCarloAsync, type MCResults } from './monte-carlo';
+import { DistributionPanel } from './DistributionPanel';
+import { formatDistValue } from './helpers';
 import { Progress } from '@/components/ui/progress';
 import { addDocId } from '@/doc-storage';
 import './datagrid.css';
@@ -94,6 +97,8 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   } | null>(null);
 
   const [addRowCount, setAddRowCount] = useState(10);
+  const [mcResults, setMcResults] = useState<MCResults | null>(null);
+  const mcCancelRef = useRef<(() => void) | null>(null);
   const { attachToPresence } = usePresenceLog();
 
   const [currentSheetId, setCurrentSheetId] = useState<string | null>(null);
@@ -159,6 +164,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const rebuildHyperFormula = useCallback(() => {
     const doc = handleRef.current?.doc();
     if (!doc?.sheets) return;
+    clearDistributionRegistry();
     hfRef.current?.destroy();
     const order = sortedEntries(doc.sheets);
     const sheetsData: Record<string, (string | number | boolean | null)[][]> = {};
@@ -222,6 +228,45 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     setTick(t => t + 1);
   }, [rebuildHyperFormula, syncHfSheet, currentSheetId]);
 
+  // Schedule a Monte Carlo simulation run after HF finishes syncing.
+  // Cancels any in-progress MC run and starts a new async one.
+  const scheduleMC = useCallback(() => {
+    mcCancelRef.current?.();
+    mcCancelRef.current = null;
+
+    const doc = handleRef.current?.doc();
+    const hf = hfRef.current;
+    if (!doc?.sheets || !hf) return;
+
+    // Build sheetsData for the MC engine (same format HF uses)
+    const order = sortedEntries(doc.sheets);
+    const sheetNameLookupFn = (id: string) => doc.sheets[id]?.name;
+    const sheetRowColFn = (id: string) => {
+      const s = doc.sheets[id];
+      if (!s) return undefined;
+      return { rowIds: sortedEntries(s.rows).map(([r]) => r), colIds: sortedEntries(s.columns).map(([c]) => c) };
+    };
+    const sheetsData: Record<string, (string | number | boolean | null)[][]> = {};
+    for (const [, sheet] of order) {
+      const rIds = sortedEntries(sheet.rows).map(([rid]) => rid);
+      const cIds = sortedEntries(sheet.columns).map(([cid]) => cid);
+      sheetsData[sheet.name] = buildSheetData(sheet.cells, rIds, cIds, sheetNameLookupFn, sheetRowColFn);
+    }
+
+    const curIdx = currentSheetId ? order.findIndex(([id]) => id === currentSheetId) : 0;
+    const sheetIdx = curIdx >= 0 ? curIdx : 0;
+
+    const { promise, cancel } = runMonteCarloAsync(sheetsData, sheetIdx);
+    mcCancelRef.current = cancel;
+    promise.then(results => {
+      if (results.cells.size > 0) {
+        setMcResults(results);
+      } else {
+        setMcResults(null);
+      }
+    });
+  }, [currentSheetId]);
+
   // Debounced async wrapper — shows progress bar, then runs sync after a short delay.
   const scheduleSyncHyperFormula = useCallback((delay = 50) => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -229,8 +274,9 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
     syncTimerRef.current = setTimeout(() => {
       syncTimerRef.current = null;
       syncHyperFormula();
+      scheduleMC();
     }, delay);
-  }, [syncHyperFormula]);
+  }, [syncHyperFormula, scheduleMC]);
 
   // Rebuild HyperFormula when viewing a historical snapshot (or exiting history)
   useEffect(() => {
@@ -906,8 +952,19 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
         const cIds = sortedEntries(sheet.columns).map(([cid]) => cid);
         sheetsData[sheet.name] = buildSheetData(sheet.cells, rIds, cIds, sheetNameLookupFn, sheetRowColFn);
       }
+      clearDistributionRegistry();
       const hf = HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
       hfRef.current = hf;
+
+      // Run initial Monte Carlo simulation
+      const initSheetIdx = validInitial
+        ? order.findIndex(([id]) => id === validInitial)
+        : 0;
+      const { promise: mcPromise, cancel: mcCancel } = runMonteCarloAsync(sheetsData, initSheetIdx >= 0 ? initSheetIdx : 0);
+      mcCancelRef.current = mcCancel;
+      mcPromise.then(results => {
+        if (mounted && results.cells.size > 0) setMcResults(results);
+      });
 
       // Presence
       const { presence, cleanup: presenceCleanup } = initPresence<PresenceState>(
@@ -948,6 +1005,8 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
       presenceRef.current = null;
       presenceCleanupRef.current = null;
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      mcCancelRef.current?.();
+      mcCancelRef.current = null;
       hfRef.current?.destroy();
       hfRef.current = null;
     };
@@ -1177,6 +1236,14 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
             </div>
           )}
 
+          {/* Distribution panel — shown when a cell with MC results is selected */}
+          {selectedCell && mcResults?.cells.get(`${selectedCell[0]}:${selectedCell[1]}`) && (
+            <DistributionPanel
+              stats={mcResults.cells.get(`${selectedCell[0]}:${selectedCell[1]}`)!}
+              isSource={mcResults.sources.has(`${selectedCell[0]}:${selectedCell[1]}`)}
+            />
+          )}
+
           {/* Grid table + sheet tabs wrapper */}
           <div className="datagrid-wrapper">
           <ContextMenu modal={false} onOpenChange={(open: boolean) => { if (!open) setContextMenu(null); }}>
@@ -1251,6 +1318,8 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                         const rawValue = currentSheet?.cells[`${rowId}:${colId}`]?.value || '';
                         const safeHfIdx = hf && hfSheetIndex < hf.countSheets() ? hfSheetIndex : undefined;
                         const display = getDisplayValue(safeHfIdx !== undefined ? hf : null, rawValue, ci, ri, safeHfIdx ?? 0);
+                        const cellMc = mcResults?.cells.get(`${ci}:${ri}`);
+                        const isMcSource = mcResults?.sources.has(`${ci}:${ri}`) ?? false;
                         const inRange = selectionRange && ci >= selectionRange.minCol && ci <= selectionRange.maxCol && ri >= selectionRange.minRow && ri <= selectionRange.maxRow;
                         const inAutofillTarget = autofillTarget && ci >= autofillTarget.minCol && ci <= autofillTarget.maxCol && ri >= autofillTarget.minRow && ri <= autofillTarget.maxRow;
                         const showAutofillHandle = autofillHandleCell && autofillHandleCell[0] === ci && autofillHandleCell[1] === ri && !autofillDragRef.current;
@@ -1279,7 +1348,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                         return (
                           <td
                             key={colId}
-                            className={'datagrid-cell' + (isSelected && !refInfo && !isEditing ? ' selected' : '') + (inRange && isMultiSelect ? ' in-range' : '') + (inAutofillTarget ? ' autofill-target' : '') + (isRowSelected || selectedCols.has(ci) ? ' header-selected' : '') + (peers ? ' peer-focused' : '') + (refInfo ? ' formula-ref-highlight' : '')}
+                            className={'datagrid-cell' + (isSelected && !refInfo && !isEditing ? ' selected' : '') + (inRange && isMultiSelect ? ' in-range' : '') + (inAutofillTarget ? ' autofill-target' : '') + (isRowSelected || selectedCols.has(ci) ? ' header-selected' : '') + (peers ? ' peer-focused' : '') + (refInfo ? ' formula-ref-highlight' : '') + (cellMc ? (isMcSource ? ' dist-source' : ' dist-dependent') : '')}
                             style={Object.keys(cellStyle).length > 0 ? cellStyle : undefined}
                             title={peers ? `Peer ${peers.peerId.slice(0, 8)}` : undefined}
                             data-cell-col={ci}
@@ -1352,7 +1421,12 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
                                 })()}
                               </>
                             ) : (
-                              <span className={display.startsWith('#') ? 'datagrid-cell-error' : rawValue.startsWith('=') ? 'datagrid-formula' : ''} title={display.startsWith('#') ? display : undefined}>{display}</span>
+                              <span
+                                className={display.startsWith('#') ? 'datagrid-cell-error' : rawValue.startsWith('=') ? 'datagrid-formula' : ''}
+                                title={cellMc ? `μ=${cellMc.mean.toPrecision(4)}  σ=${cellMc.stdev.toPrecision(4)}\nP5=${cellMc.p5.toPrecision(4)}  P95=${cellMc.p95.toPrecision(4)}` : display.startsWith('#') ? display : undefined}
+                              >
+                                {cellMc && !display.startsWith('#') ? formatDistValue(cellMc.mean, cellMc.stdev) : display}
+                              </span>
                             )}
                             {showAutofillHandle && (
                               <div
