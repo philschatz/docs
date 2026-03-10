@@ -96,10 +96,21 @@ export function AccessControl({ khDocId, docId, authDocId, sharingGroupId, onGro
       if (result.groupId && result.groupId !== sharingGroupId) {
         onGroupIdChange?.(result.groupId);
       }
-      const keyB64 = btoa(String.fromCharCode(...result.inviteKeyBytes))
+      // Encode invite payload: 32-byte seed + archive bytes as a single base64url blob
+      const seed = new Uint8Array(result.inviteKeyBytes);
+      const archive = new Uint8Array(result.archiveBytes);
+      // Format: [4-byte seed length (big-endian)] [seed] [archive]
+      const payload = new Uint8Array(4 + seed.length + archive.length);
+      const view = new DataView(payload.buffer);
+      view.setUint32(0, seed.length);
+      payload.set(seed, 4);
+      payload.set(archive, 4 + seed.length);
+      let binary = '';
+      for (let i = 0; i < payload.length; i++) binary += String.fromCharCode(payload[i]);
+      const payloadB64 = btoa(binary)
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       const base = window.location.origin + window.location.pathname;
-      const url = `${base}#/invite/${docId}/${authDocId || ''}/${keyB64}`;
+      const url = `${base}#/invite/${docId}/${authDocId || '_'}/${payloadB64}`;
       setInviteUrl(url);
     } catch (err: any) {
       setError(err.message);

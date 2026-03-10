@@ -1,21 +1,22 @@
 /**
  * Invite claiming page.
  *
- * URL format: /#/invite/{docId}/{authDocId}/{inviteKeyBase64url}
+ * URL format: /#/invite/{docId}/{authDocId}/{payloadBase64url}
  *
- * The invite key is in the URL path (after the hash, so never sent to server).
- * On claim:
- * 1. Load auth doc via repo (sync membership graph)
- * 2. Use invite key to authenticate and get document access
- * 3. Delegate invite key's access to this device's real identity
- * 4. Immediately revoke the invite key (rotates keys — URL becomes useless)
- * 5. Redirect to the document
+ * The payload contains an invite seed + inviter's keyhive archive.
+ * It's in the URL fragment (after the hash) so it's never sent to the server.
+ *
+ * Claiming flow:
+ * 1. Decode the payload (seed + archive)
+ * 2. Send to worker which reconstructs the invite identity
+ * 3. Worker ingests archive, delegates access to this device's real identity
+ * 4. Add document to local storage and redirect to it
  */
 
 import { useState, useEffect } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { addDocId } from '@/doc-storage';
+import { addDocId, getDocEntry } from '@/doc-storage';
+import { claimInvite } from '../../shared/keyhive-api';
 
 interface InvitePageProps {
   docId?: string;
@@ -24,8 +25,29 @@ interface InvitePageProps {
   path?: string;
 }
 
+function decodePayload(b64url: string): { seed: Uint8Array; archive: Uint8Array } {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const view = new DataView(bytes.buffer);
+  const seedLen = view.getUint32(0);
+  const seed = bytes.slice(4, 4 + seedLen);
+  const archive = bytes.slice(4 + seedLen);
+  return { seed, archive };
+}
+
+function docRoute(docId: string, type?: string): string {
+  switch (type) {
+    case 'Calendar': return `/calendars/${docId}`;
+    case 'TaskList': return `/tasks/${docId}`;
+    case 'DataGrid': return `/datagrids/${docId}`;
+    default: return `/source/${docId}`;
+  }
+}
+
 export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
-  const [status, setStatus] = useState('Claiming invite...');
+  const [status, setStatus] = useState('Preparing...');
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -35,72 +57,69 @@ export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
       return;
     }
 
-    claimInvite(docId, authDocId || '', inviteKey, setStatus)
-      .then(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setStatus('Decoding invite...');
+        const { seed, archive } = decodePayload(inviteKey);
+
+        setStatus('Claiming access...');
+        const result = await claimInvite(Array.from(seed), Array.from(archive));
+
+        if (cancelled) return;
+
+        setStatus('Adding document...');
+        const entry = getDocEntry(docId);
+        addDocId(docId, {
+          ...entry,
+          encrypted: true,
+          authDocId: (authDocId && authDocId !== '_') ? authDocId : undefined,
+          khDocId: result.khDocId,
+        });
+
         setDone(true);
         setStatus('Invite claimed! Redirecting...');
-        // Add to doc list and redirect
-        addDocId(docId, { encrypted: true, authDocId });
+
+        const type = entry?.type;
         setTimeout(() => {
-          window.location.hash = `/source/${docId}`;
-        }, 1000);
-      })
-      .catch((err: any) => {
-        setError(err.message || 'Failed to claim invite');
-      });
+          window.location.hash = docRoute(docId, type);
+        }, 800);
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(err.message || 'Failed to claim invite');
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [docId, authDocId, inviteKey]);
 
   return (
     <div className="max-w-md mx-auto p-8 text-center">
       <h1 className="text-xl font-bold mb-4">
-        <span className="material-symbols-outlined align-middle mr-1">link</span>
+        <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 24 }}>link</span>
         Accepting Invite
       </h1>
 
       {error ? (
         <div className="text-destructive mb-4">
-          <p>{error}</p>
-          <Button className="mt-4" onClick={() => { window.location.hash = '/'; }}>
+          <p className="mb-2">{error}</p>
+          <Button variant="outline" onClick={() => { window.location.hash = '/'; }}>
             Go home
           </Button>
         </div>
       ) : (
-        <>
+        <div>
           <p className="text-sm text-muted-foreground mb-4">{status}</p>
-          {!done && <Progress className="w-full" value={50} />}
-        </>
+          {done && (
+            <p className="text-sm text-green-600 font-medium">
+              <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 16 }}>check_circle</span>
+              Access granted
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
-}
-
-async function claimInvite(
-  docId: string,
-  authDocId: string,
-  inviteKeyB64url: string,
-  setStatus: (s: string) => void,
-): Promise<void> {
-  setStatus('Loading keyhive...');
-
-  // Decode the base64url invite key
-  const b64 = inviteKeyB64url.replace(/-/g, '+').replace(/_/g, '/');
-  const _inviteKeyBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-
-  setStatus('Syncing auth document...');
-
-  // TODO: Full implementation:
-  // 1. Create a temporary keyhive Signer from the invite key bytes
-  // 2. Load the auth doc via automerge-repo to get the membership graph
-  // 3. Ingest keyhive events from the auth doc
-  // 4. Use the invite key's keyhive to delegate access to our real identity
-  // 5. Revoke the invite key (triggers BeeKEM key rotation)
-  // 6. Write the revocation event back to the auth doc
-  //
-  // For now, this is a placeholder that adds the doc to the local list.
-  // The full crypto handshake requires worker-side coordination.
-
-  setStatus('Adding document...');
-  addDocId(docId, { encrypted: !!authDocId, authDocId: authDocId || undefined });
-
-  setStatus('Done!');
 }

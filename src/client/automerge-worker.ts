@@ -25,7 +25,8 @@ export type MainToWorker =
   | { type: 'kh-generate-invite'; id: number; docId: string; groupId: string; role: string }
   | { type: 'kh-list-devices'; id: number }
   | { type: 'kh-enable-sharing'; id: number }
-  | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string };
+  | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string }
+  | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; archiveBytes: number[] };
 
 export type WorkerToMain =
   | { type: 'ready' }
@@ -388,8 +389,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       // Find the keyhive Document
       const doc = khDocuments.get(msg.docId);
       if (!doc) throw new Error('Document not found. Re-enable sharing.');
-      // Generate an ephemeral invite signer
-      const inviteSigner = mod.Signer.generateMemory();
+      // Generate ephemeral invite signer from a random seed so the
+      // recipient can reconstruct it from the seed bytes in the URL.
+      const seed = crypto.getRandomValues(new Uint8Array(32));
+      const inviteSigner = mod.Signer.memorySignerFromBytes(seed);
       const store = mod.CiphertextStore.newInMemory();
       const tempKh = await mod.Keyhive.init(inviteSigner, store, () => {});
       const inviteCard = await tempKh.contactCard();
@@ -399,9 +402,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const access = mod.Access.tryFromString(msg.role);
       if (!access) throw new Error(`Invalid role: ${msg.role}`);
       await kh.addMember(inviteAgent, doc.toMembered(), access, []);
+      // Serialize the inviter's archive so the recipient can ingest the delegation events
+      const archive = await kh.toArchive();
+      const archiveBytes = Array.from(archive.toBytes());
       await keyhiveApi.persistArchive();
-      const keyBytes = Array.from(inviteSigner.verifyingKey);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { inviteKeyBytes: keyBytes, inviteAgentId: inviteAgent.toString(), groupId: '' } } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { inviteKeyBytes: Array.from(seed), archiveBytes, groupId: '' } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
@@ -422,6 +427,49 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       }
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: true } satisfies WorkerToMain);
     } catch (err: any) {
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'kh-claim-invite') {
+    try {
+      if (!keyhiveApi) throw new Error('Keyhive not available');
+      const mod = keyhiveApi.getModule();
+      const kh = keyhiveApi.getKeyhive();
+      // Reconstruct the invite signer from the seed bytes
+      const inviteSeed = new Uint8Array(msg.inviteSeed);
+      const inviteSigner = mod.Signer.memorySignerFromBytes(inviteSeed);
+      // Create a temporary keyhive with the invite signer — this has the invite's identity
+      const tempStore = mod.CiphertextStore.newInMemory();
+      const inviteKh = await mod.Keyhive.init(inviteSigner, tempStore, () => {});
+      // Ingest the inviter's archive so the invite keyhive sees the delegation
+      const inviterArchive = new mod.Archive(new Uint8Array(msg.archiveBytes));
+      await inviteKh.ingestArchive(inviterArchive);
+      // Exchange contact cards: invite keyhive learns about our real identity
+      const ourCard = await kh.contactCard();
+      const ourIndividualInInviteKh = await inviteKh.receiveContactCard(ourCard);
+      const ourAgentInInviteKh = ourIndividualInInviteKh.toAgent();
+      // Find the document(s) the invite has access to
+      const reachable = await inviteKh.reachableDocs();
+      if (reachable.length === 0) throw new Error('Invite has no document access');
+      const docSummary = reachable[0];
+      const inviteDoc = docSummary.doc;
+      const inviteAccess = docSummary.access;
+      // Delegate the invite's access to our real identity
+      await inviteKh.addMember(ourAgentInInviteKh, inviteDoc.toMembered(), inviteAccess, []);
+      // Our real keyhive ingests the invite keyhive's archive (learns delegation chain)
+      const inviteArchive = await inviteKh.toArchive();
+      await kh.ingestArchive(inviteArchive);
+      // Store the document reference
+      const khDocId = bytesToBase64(inviteDoc.id.toBytes());
+      const docFromOurKh = await kh.getDocument(inviteDoc.doc_id);
+      if (docFromOurKh) {
+        khDocuments.set(khDocId, docFromOurKh);
+      }
+      await keyhiveApi.persistArchive();
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { khDocId } } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.error('[kh-claim-invite] failed:', err);
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }

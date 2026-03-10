@@ -109,9 +109,14 @@ export function changeRole(agentId: string, docId: string, newRole: string): Pro
   return request('kh-change-role', { agentId, docId, newRole });
 }
 
-/** Generate an invite link for a document. Returns data for URL encoding. */
-export function generateInvite(docId: string, groupId: string, role: string): Promise<{ inviteKeyBytes: number[]; inviteAgentId: string; groupId: string }> {
+/** Generate an invite link for a document. Returns seed bytes + inviter archive for URL encoding. */
+export function generateInvite(docId: string, groupId: string, role: string): Promise<{ inviteKeyBytes: number[]; archiveBytes: number[]; groupId: string }> {
   return request('kh-generate-invite', { docId, groupId, role });
+}
+
+/** Claim an invite using the seed bytes and inviter archive from the invite URL. */
+export function claimInvite(inviteSeed: number[], archiveBytes: number[]): Promise<{ khDocId: string }> {
+  return request('kh-claim-invite', { inviteSeed, archiveBytes });
 }
 
 /** Enable sharing on a document by creating a keyhive Document. Returns the keyhive doc ID and sharing group ID. */
