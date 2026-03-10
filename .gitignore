@@ -44,3 +44,4 @@ cypress/screenshots/
 test.ics
 test-parser.js
 data-backup.zip
+.direnv/*
