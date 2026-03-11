@@ -26,7 +26,7 @@ import {
 } from "./messages";
 import { PromiseQueue, Pending } from "./pending";
 import { OpCache } from "./op-cache";
-import { getEventsForAgent, getEventHashesForAgent, keyhiveIdentifierFromPeerId } from "../utilities";
+import { getEventsForAgent, getEventHashesForAgent, keyhiveIdentifierFromPeerId, isKeyhivePeerId } from "../utilities";
 import {
   getPendingOpHashes,
   KeyhiveStorage,
@@ -575,6 +575,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         this.emit("message", message);
         return;
       }
+      // Messages from non-keyhive peers (e.g. relay server) aren't signed — pass through
+      if (!isKeyhivePeerId(message.senderId)) {
+        this.emit("message", message);
+        return;
+      }
       const maybeKeyhiveMessageData = decodeKeyhiveMessageData(message.data);
       if (maybeKeyhiveMessageData) {
         if (verifyData(message.senderId, maybeKeyhiveMessageData)) {
@@ -585,7 +590,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.streamingMetrics.recordNonKeyhive();
             }
             message.data = maybeKeyhiveMessageData.signed.payload;
-            if (message.type === "sync") {
+            // Check write access before emitting sync messages to the repo.
+            // With a relay server, senderId is the original peer (not the server),
+            // so we can verify the sender has write permission for this document.
+            console.log(`[AMRepoKeyhive-fork] non-keyhive msg: type=${message.type} senderId=${message.senderId} documentId=${(message as any).documentId} docMapSize=${this.docMap.size}`);
+            if ((message.type === "sync" || message.type === "request") && (message as any).documentId) {
               void this.checkAccessAndEmit(message);
             } else {
               this.emit("message", message);
@@ -713,6 +722,9 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       for (const targetId of this.peers.keys()) {
         if (targetId == senderId || targetId == this.peerId!) {
           continue;
+        }
+        if (!isKeyhivePeerId(targetId)) {
+          continue; // Skip non-keyhive peers (e.g. relay server)
         }
         if (!this.readyToSendKeyhiveRequest(targetId)) {
           console.debug(`[AMRepoKeyhive] Attempted to send keyhive sync request to ${targetId} too soon. Ignoring.`);

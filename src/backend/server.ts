@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { Repo } from '@automerge/automerge-repo';
 import { WebSocketServerAdapter } from '@automerge/automerge-repo-network-websocket';
 import { NodeFSStorageAdapter } from '@automerge/automerge-repo-storage-nodefs';
+import { WebSocketRelay } from './relay';
 import { CalDAVHandler } from './caldav-handler';
 import { createUiRoutes } from './routes/ui';
 import { createDavRoutes } from './routes/dav';
@@ -16,9 +17,8 @@ const isProd = process.env.NODE_ENV === 'production';
 const dataDir = process.env.AUTOMERGE_DATA_DIR || './.data';
 fs.mkdirSync(dataDir, { recursive: true });
 
-// WebSocket server for automerge-repo sync
+// WebSocket server — used by both the relay (production) and the test Repo adapter.
 const wss = new WebSocketServer({ noServer: true });
-const wsAdapter = new WebSocketServerAdapter(wss);
 
 // The subduction-tagged automerge-repo requires a subduction instance — provide a no-op stub.
 const noopSubduction = {
@@ -33,14 +33,19 @@ const noopSubduction = {
   addFragment() { return Promise.resolve(undefined); },
 };
 
-// Initialize keyhive-aware automerge-repo.
-// The KeyhiveNetworkAdapter signs all messages, so the server must also use it
-// to unwrap signed messages from clients and sign its own outgoing messages.
+// In production the server is a pure relay: it forwards messages between peers
+// verbatim and never adds its own keyhive signature to a client's changes.
+//
+// In the test environment we fall back to a plain Repo so Jest can run without
+// an ESM keyhive dependency and CalDAV tests still work.
+let relay: WebSocketRelay | null = null;
+
 const repoPromise = (async () => {
   const storageAdapter = new NodeFSStorageAdapter(dataDir);
 
-  // In test environment, skip keyhive (ESM dynamic import not available in Jest)
   if (process.env.JEST_WORKER_ID) {
+    // Test environment: plain Repo so Jest can sync documents for CalDAV tests.
+    const wsAdapter = new WebSocketServerAdapter(wss);
     return new Repo({
       network: [wsAdapter],
       storage: storageAdapter,
@@ -50,33 +55,20 @@ const repoPromise = (async () => {
     } as any);
   }
 
-  // Dynamic import: @automerge/automerge-repo-keyhive is ESM-only
-  const khBridge = await (Function('return import("@automerge/automerge-repo-keyhive")')() as Promise<typeof import('@automerge/automerge-repo-keyhive')>);
-  khBridge.initKeyhiveWasm();
+  // Production/dev: pure relay — no Repo on the WebSocket path.
+  relay = new WebSocketRelay();
+  wss.on('connection', (ws) => relay!.handleConnection(ws));
+  console.log('[relay] WebSocket relay started (no server-side keyhive signing)');
 
-  const khIntegration = await khBridge.initializeAutomergeRepoKeyhive({
-    storage: storageAdapter,
-    peerIdSuffix: 'server',
-    networkAdapter: wsAdapter,
-    onlyShareWithHardcodedServerPeerId: false,
-    periodicallyRequestSync: true,
-    automaticArchiveIngestion: true,
-    cacheHashes: false,
-    syncRequestInterval: 5000,
-  });
-
-  const repo = new Repo({
-    network: [khIntegration.networkAdapter],
+  // Return a storage-only Repo for CalDAV (no network adapter — documents are
+  // populated only when a client explicitly pushes them via the relay).
+  return new Repo({
+    network: [],
     storage: storageAdapter,
     subduction: noopSubduction,
-    peerId: khIntegration.peerId,
-    sharePolicy: async () => true,
+    peerId: 'caldav-server' as any,
+    sharePolicy: async () => false,
   } as any);
-
-  khIntegration.linkRepo(repo);
-  console.log(`[keyhive] Server initialized, peerId: ${khIntegration.peerId}`);
-
-  return repo;
 })();
 
 // Body parsers

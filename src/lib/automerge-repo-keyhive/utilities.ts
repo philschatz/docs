@@ -7,6 +7,17 @@ export function peerIdFromSigner(signer: Signer, suffix: string = ""): PeerId {
   return peerIdFromVerifyingKey(signer.verifyingKey, suffix);
 }
 
+/** Returns true if the peer ID prefix is a valid base64-encoded Ed25519 verifying key (32 bytes). */
+export function isKeyhivePeerId(peerId: PeerId): boolean {
+  const prefix = verifyingKeyPeerIdWithoutSuffix(peerId);
+  try {
+    const bytes = Uint8Array.from(atob(prefix), (c) => c.charCodeAt(0));
+    return bytes.length === 32;
+  } catch {
+    return false;
+  }
+}
+
 export function keyhiveIdentifierFromPeerId(peerId: PeerId): Identifier {
   const peerIdPrefix = verifyingKeyPeerIdWithoutSuffix(peerId);
   try {
