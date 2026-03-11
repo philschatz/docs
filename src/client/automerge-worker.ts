@@ -30,6 +30,7 @@ export type MainToWorker =
 
 export type WorkerToMain =
   | { type: 'ready' }
+  | { type: 'kh-ready' }
   | { type: 'error'; message: string }
   | { type: 'peer-connected'; peerCount: number; peers: string[] }
   | { type: 'peer-disconnected'; peerCount: number; peers: string[] }
@@ -319,6 +320,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
             console.log('[keyhive] event:', event.variant);
           });
           console.log('[keyhive] initialized, device:', keyhiveApi.deviceId());
+          (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
         } catch (err: any) {
           console.warn('[keyhive] init failed (non-fatal):', errMsg(err));
         }

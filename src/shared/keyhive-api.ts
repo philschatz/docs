@@ -3,7 +3,7 @@
  * Sends messages to the worker and returns promises for responses.
  */
 
-import { workerReady } from './automerge';
+import { keyhiveReady } from './automerge';
 
 // The worker reference — we grab it from automerge.ts's module scope.
 // Since this module is imported after automerge.ts sets up the worker,
@@ -35,7 +35,7 @@ export function handleKeyhiveResponse(msg: { type: string; id: number; result?: 
 }
 
 function request<T>(type: string, payload: Record<string, any> = {}): Promise<T> {
-  return workerReady.then(() => {
+  return keyhiveReady.then(() => {
     const id = ++idCounter;
     return new Promise<T>((resolve, reject) => {
       pending.set(id, { resolve, reject });

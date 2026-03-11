@@ -80,6 +80,10 @@ export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
 const ns = repo.networkSubsystem;
 ns.on('peer', () => { resolveRepoReady(); });
 
+// Keyhive-specific ready promise — resolves when WASM + keyhive are fully initialized
+let resolveKeyhiveReady: () => void;
+export const keyhiveReady = new Promise<void>(r => { resolveKeyhiveReady = r; });
+
 /**
  * Load a document via findWithProgress, calling `onProgress(0-100)` as loading advances.
  * `onProgress` is called with `null` once the document is ready (caller should hide the bar).
@@ -145,6 +149,8 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
   const msg = e.data;
   if (msg.type === 'ready') {
     // Worker initialized — peer event on repo.networkSubsystem resolves workerReady
+  } else if (msg.type === 'kh-ready') {
+    resolveKeyhiveReady();
   } else if (msg.type === 'error') {
     console.error('Automerge worker error:', msg.message);
   } else if (msg.type === 'peer-connected' || msg.type === 'peer-disconnected') {
