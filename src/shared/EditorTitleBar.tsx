@@ -3,7 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { useConnectionStatus, repo } from './automerge';
 import { peerColor } from './presence';
 import { AccessControl } from '../client/components/AccessControl';
-import { enableSharing, registerSharingGroup } from './keyhive-api';
+import { enableSharing, registerSharingGroup, registerDocMapping } from './keyhive-api';
 
 interface PeerLike {
   peerId: string;
@@ -51,17 +51,18 @@ export function EditorTitleBar<P extends PeerLike>({
   const [khDocId, setKhDocId] = useState(initialKhDocId);
   const [enabling, setEnabling] = useState(false);
 
-  // Re-register persisted sharing group with the worker on mount
+  // Re-register persisted sharing group and doc mapping with the worker on mount
   useEffect(() => {
     if (initialKhDocId) {
       registerSharingGroup(initialKhDocId, sharingGroupId || '').catch(() => {});
+      if (docId) registerDocMapping(docId, initialKhDocId);
     }
-  }, [initialKhDocId, sharingGroupId]);
+  }, [initialKhDocId, sharingGroupId, docId]);
 
   const handleEnableSharing = async () => {
     setEnabling(true);
     try {
-      const { khDocId: newId, groupId } = await enableSharing();
+      const { khDocId: newId, groupId } = await enableSharing(docId!);
       setKhDocId(newId);
       onSharingEnabled?.(newId, groupId);
     } catch (err: any) {

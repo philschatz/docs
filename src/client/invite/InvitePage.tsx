@@ -64,7 +64,7 @@ export function InvitePage({ docId, inviteKey }: InvitePageProps) {
         const { seed, archive } = decodePayload(inviteKey);
 
         setStatus('Claiming access...');
-        const result = await claimInvite(Array.from(seed), Array.from(archive));
+        const result = await claimInvite(Array.from(seed), Array.from(archive), docId);
 
         if (cancelled) return;
 

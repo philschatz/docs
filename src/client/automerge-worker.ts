@@ -24,9 +24,10 @@ export type MainToWorker =
   | { type: 'kh-change-role'; id: number; agentId: string; docId: string; newRole: string }
   | { type: 'kh-generate-invite'; id: number; docId: string; groupId: string; role: string }
   | { type: 'kh-list-devices'; id: number }
-  | { type: 'kh-enable-sharing'; id: number }
+  | { type: 'kh-enable-sharing'; id: number; automergeDocId: string }
+  | { type: 'kh-register-doc-mapping'; automergeDocId: string; khDocId: string }
   | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string }
-  | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; archiveBytes: number[] };
+  | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; archiveBytes: number[]; automergeDocId: string };
 
 export type WorkerToMain =
   | { type: 'ready' }
@@ -46,14 +47,14 @@ self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
 // Dynamic import so the queue handler above is registered BEFORE WASM top-level await runs
 let Repo: any, IndexedDBStorageAdapter: any, MessageChannelNetworkAdapter: any, Automerge: any;
 let BrowserWebSocketClientAdapter: any;
-let khBridge: typeof import('@automerge/automerge-repo-keyhive') | null = null;
+let khBridge: typeof import('../lib/automerge-repo-keyhive/index') | null = null;
 try {
   ({ Repo } = await import('@automerge/automerge-repo'));
   ({ IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb'));
   ({ MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel'));
   ({ BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket'));
   Automerge = await import('@automerge/automerge');
-  khBridge = await import('@automerge/automerge-repo-keyhive');
+  khBridge = await import('../lib/automerge-repo-keyhive/index');
   khBridge.initKeyhiveWasm();
 } catch (err: any) {
   console.error('[worker] Failed to load modules:', err);
@@ -359,6 +360,17 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
+  if (msg.type === 'kh-register-doc-mapping') {
+    try {
+      if (!khIntegration || !khBridge) throw new Error('Keyhive not available');
+      const khDocId = new khBridge.DocumentId(base64ToBytes(msg.khDocId));
+      khIntegration.networkAdapter.registerDoc(msg.automergeDocId, khDocId);
+      console.log('[kh-register-doc-mapping] registered', msg.automergeDocId, '→', msg.khDocId);
+    } catch (err: any) {
+      console.warn('[kh-register-doc-mapping] failed:', errMsg(err));
+    }
+  }
+
   if (msg.type === 'kh-enable-sharing') {
     try {
       if (!khIntegration || !khBridge) throw new Error('Keyhive not available');
@@ -367,9 +379,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const doc = await kh.generateDocument([], ref, []);
       const khDocId = bytesToBase64(doc.id.toBytes());
       khDocuments.set(khDocId, doc);
+      // Register the automerge→keyhive doc mapping for access enforcement
+      khIntegration.networkAdapter.registerDoc(msg.automergeDocId, doc.doc_id);
       await persistKeyhive();
       triggerKeyhiveSync();
-      console.log('[kh-enable-sharing] doc created, khDocId:', khDocId);
+      console.log('[kh-enable-sharing] doc created, khDocId:', khDocId, 'automergeDocId:', msg.automergeDocId);
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { khDocId, groupId: '' } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -505,6 +519,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const docFromOurKh = await kh.getDocument(inviteDoc.doc_id);
       if (docFromOurKh) {
         khDocuments.set(khDocId, docFromOurKh);
+      }
+      // Register the automerge→keyhive doc mapping for access enforcement
+      if (msg.automergeDocId) {
+        khIntegration.networkAdapter.registerDoc(msg.automergeDocId, inviteDoc.doc_id);
       }
       await persistKeyhive();
       triggerKeyhiveSync();

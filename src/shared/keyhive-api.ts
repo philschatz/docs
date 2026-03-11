@@ -115,16 +115,23 @@ export function generateInvite(docId: string, groupId: string, role: string): Pr
 }
 
 /** Claim an invite using the seed bytes and inviter archive from the invite URL. */
-export function claimInvite(inviteSeed: number[], archiveBytes: number[]): Promise<{ khDocId: string }> {
-  return request('kh-claim-invite', { inviteSeed, archiveBytes });
+export function claimInvite(inviteSeed: number[], archiveBytes: number[], automergeDocId: string): Promise<{ khDocId: string }> {
+  return request('kh-claim-invite', { inviteSeed, archiveBytes, automergeDocId });
 }
 
 /** Enable sharing on a document by creating a keyhive Document. */
-export function enableSharing(): Promise<{ khDocId: string; groupId: string }> {
-  return request('kh-enable-sharing');
+export function enableSharing(automergeDocId: string): Promise<{ khDocId: string; groupId: string }> {
+  return request('kh-enable-sharing', { automergeDocId });
 }
 
 /** Register a previously-created sharing group so the worker can find it after reload. */
 export function registerSharingGroup(khDocId: string, groupId: string): Promise<void> {
   return request('kh-register-sharing-group', { khDocId, groupId });
+}
+
+/** Register an automerge→keyhive doc mapping for access enforcement. Fire-and-forget. */
+export function registerDocMapping(automergeDocId: string, khDocId: string): void {
+  try {
+    getWorker().postMessage({ type: 'kh-register-doc-mapping', automergeDocId, khDocId });
+  } catch { /* ignore if worker not ready */ }
 }
