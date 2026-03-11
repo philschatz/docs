@@ -89,6 +89,19 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+/** Look up an Agent from docMemberCapabilities by matching Identifier bytes (base64). */
+async function findAgentByIdBytes(kh: any, doc: any, agentIdB64: string): Promise<any> {
+  const targetBytes = base64ToBytes(agentIdB64);
+  const members = await kh.docMemberCapabilities(doc.doc_id);
+  for (const m of members) {
+    const memberBytes: Uint8Array = m.who.id.toBytes();
+    if (memberBytes.length === targetBytes.length && memberBytes.every((b: number, i: number) => b === targetBytes[i])) {
+      return m.who;
+    }
+  }
+  throw new Error('Member not found in document');
+}
+
 let repo: InstanceType<typeof Repo> | null = null;
 let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = null;
 // Maps khDocId (base64) → keyhive Document object (needed for addMember's other_relevant_docs).
@@ -353,7 +366,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const me = await khIntegration.keyhive.individual;
       const myAgentStr = me.toAgent().toString();
       const result = members.map((m: any) => ({
-        agentId: m.who.toString(),
+        agentId: bytesToBase64(m.who.id.toBytes()),
+        displayId: m.who.toString(),
         role: m.can.toString(),
         isIndividual: m.who.isIndividual(),
         isGroup: m.who.isGroup(),
@@ -468,10 +482,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const kh = khIntegration.keyhive;
       const doc = khDocuments.get(msg.docId);
       if (!doc) throw new Error('Document not found');
-      const agentId = new khBridge.Identifier(base64ToBytes(msg.agentId));
-      const individual = await kh.getIndividual(agentId as any);
-      if (!individual) throw new Error('Unknown agent');
-      await kh.revokeMember(individual.toAgent(), true, doc.toMembered());
+      const agent = await findAgentByIdBytes(kh, doc, msg.agentId);
+      await kh.revokeMember(agent, true, doc.toMembered());
       await persistKeyhive();
       triggerKeyhiveSync();
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: true } satisfies WorkerToMain);
@@ -486,10 +498,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const kh = khIntegration.keyhive;
       const doc = khDocuments.get(msg.docId);
       if (!doc) throw new Error('Document not found');
-      const agentId = new khBridge.Identifier(base64ToBytes(msg.agentId));
-      const individual = await kh.getIndividual(agentId as any);
-      if (!individual) throw new Error('Unknown agent');
-      const agent = individual.toAgent();
+      const agent = await findAgentByIdBytes(kh, doc, msg.agentId);
       await kh.revokeMember(agent, true, doc.toMembered());
       const access = khBridge.Access.tryFromString(msg.newRole);
       if (!access) throw new Error(`Invalid role: ${msg.newRole}`);
@@ -551,7 +560,12 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         khIntegration.networkAdapter.registerDoc(msg.automergeDocId, inviteDoc.doc_id);
       }
       await persistKeyhive();
-      triggerKeyhiveSync();
+      // Send keyhive sync request so the server learns about our access
+      khIntegration.networkAdapter.syncKeyhive();
+      // Pre-request the automerge document so it starts syncing alongside keyhive
+      if (msg.automergeDocId && repo) {
+        repo.find(msg.automergeDocId as any);
+      }
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { khDocId } } satisfies WorkerToMain);
     } catch (err: any) {
       console.error('[kh-claim-invite] failed:', err);

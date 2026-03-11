@@ -585,7 +585,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.streamingMetrics.recordNonKeyhive();
             }
             message.data = maybeKeyhiveMessageData.signed.payload;
-            this.emit("message", message);
+            if (message.type === "sync") {
+              void this.checkAccessAndEmit(message);
+            } else {
+              this.emit("message", message);
+            }
           } else if (this.isBatching()) {
             this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
           } else {

@@ -59,6 +59,7 @@ export interface IdentityInfo {
 
 export interface MemberInfo {
   agentId: string;
+  displayId: string;
   role: string;
   isIndividual: boolean;
   isGroup: boolean;
