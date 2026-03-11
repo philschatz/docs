@@ -17,9 +17,13 @@ export function App() {
       <InvitePage path="/invite/:docId/:inviteKey" />
       <AllCalendars path="/calendars/" />
       <Calendar path="/calendars/:docId" />
+      <Calendar path="/view/calendars/:docId" readOnly />
       <Tasks path="/tasks/:docId" />
+      <Tasks path="/view/tasks/:docId" readOnly />
       <DataGrid path="/datagrids/:docId/sheets/:sheetId" />
       <DataGrid path="/datagrids/:docId" />
+      <DataGrid path="/view/datagrids/:docId/sheets/:sheetId" readOnly />
+      <DataGrid path="/view/datagrids/:docId" readOnly />
       <SourceViewer path="/source/:docId/:rest*" />
       <SourceViewer path="/source/:docId" />
     </Router>

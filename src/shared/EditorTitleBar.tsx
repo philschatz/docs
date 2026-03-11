@@ -4,6 +4,7 @@ import { useConnectionStatus, repo } from './automerge';
 import { peerColor } from './presence';
 import { AccessControl } from '../client/components/AccessControl';
 import { enableSharing, registerSharingGroup, registerDocMapping } from './keyhive-api';
+import { useAccess } from './useAccess';
 
 interface PeerLike {
   peerId: string;
@@ -50,6 +51,7 @@ export function EditorTitleBar<P extends PeerLike>({
   const connected = useConnectionStatus();
   const [khDocId, setKhDocId] = useState(initialKhDocId);
   const [enabling, setEnabling] = useState(false);
+  const { access } = useAccess(khDocId);
 
   // Re-register persisted sharing group and doc mapping with the worker on mount
   useEffect(() => {
@@ -117,6 +119,17 @@ export function EditorTitleBar<P extends PeerLike>({
         >
           {connected ? 'Connected' : 'Disconnected'}
         </span>
+
+        {access && (
+          <span
+            className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground"
+            title={`Access: ${access}`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              {access === 'admin' ? 'admin_panel_settings' : access === 'write' ? 'edit' : access === 'read' ? 'visibility' : 'download'}
+            </span>
+          </span>
+        )}
 
         {khDocId && docId ? (
           <AccessControl

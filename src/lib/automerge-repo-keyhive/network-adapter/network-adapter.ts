@@ -585,13 +585,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.streamingMetrics.recordNonKeyhive();
             }
             message.data = maybeKeyhiveMessageData.signed.payload;
-            // Access-graph enforcement: for sync messages, verify sender has
-            // write access before applying their changes
-            if (message.type === "sync" && (message as any).documentId) {
-              void this.checkAccessAndEmit(message);
-            } else {
-              this.emit("message", message);
-            }
+            this.emit("message", message);
           } else if (this.isBatching()) {
             this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
           } else {

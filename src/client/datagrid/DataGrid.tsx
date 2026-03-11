@@ -32,7 +32,7 @@ import './datagrid.css';
 
 registerCustomFunctions();
 
-export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string; path?: string }) {
+export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId?: string; readOnly?: boolean; path?: string }) {
   // Read initial sheet from URL — prefer router-provided sheetId, fall back to parsing hash
   const initialSheetId = sheetId
     || (docId ? window.location.hash.match(/\/sheets\/([^/?#]+)/)?.[1] : undefined);
@@ -68,7 +68,7 @@ export function DataGrid({ docId, sheetId }: { docId?: string; sheetId?: string;
   const { undo, redo, canUndo, canRedo } = useUndoRedo(handleRef);
   const history = useDocumentHistory(handleRef);
   const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
-  const canEdit = history.editable && accessCanEdit;
+  const canEdit = !readOnly && history.editable && accessCanEdit;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const presenceRef = useRef<Presence<PresenceState, DataGridDocument> | null>(null);

@@ -44,7 +44,7 @@ function generateUid() {
   return Date.now() + '-' + Math.random().toString(36).substr(2, 9) + '_automerge';
 }
 
-export function Calendar({ docId }: { docId?: string; path?: string }) {
+export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
   const [status, setStatus] = useState('Loading calendar...');
   const [loadProgress, setLoadProgress] = useState<number | null>(null);
   const [calName, setCalName] = useState('Calendar');
@@ -58,7 +58,7 @@ export function Calendar({ docId }: { docId?: string; path?: string }) {
   const handleRef = useRef<DocHandle<CalendarDocument> | null>(null);
   const history = useDocumentHistory(handleRef);
   const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
-  const canEdit = history.editable && accessCanEdit;
+  const canEdit = !readOnly && history.editable && accessCanEdit;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const eventsRef = useRef<Record<string, CalendarEvent>>({});

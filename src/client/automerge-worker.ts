@@ -47,15 +47,23 @@ self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
 // Dynamic import so the queue handler above is registered BEFORE WASM top-level await runs
 let Repo: any, IndexedDBStorageAdapter: any, MessageChannelNetworkAdapter: any, Automerge: any;
 let BrowserWebSocketClientAdapter: any;
+let toDocumentId: (sedimentreeId: any) => string;
 let khBridge: typeof import('../lib/automerge-repo-keyhive/index') | null = null;
 try {
-  ({ Repo } = await import('@automerge/automerge-repo'));
+  console.log('[worker] importing modules...');
+  const repoModule: any = await import('@automerge/automerge-repo');
+  Repo = repoModule.Repo;
+  toDocumentId = repoModule.toDocumentId;
+  console.log('[worker] Repo imported');
   ({ IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb'));
   ({ MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel'));
   ({ BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket'));
   Automerge = await import('@automerge/automerge');
+  console.log('[worker] importing keyhive bridge...');
   khBridge = await import('../lib/automerge-repo-keyhive/index');
+  console.log('[worker] keyhive bridge imported, calling initKeyhiveWasm');
   khBridge.initKeyhiveWasm();
+  console.log('[worker] initKeyhiveWasm done');
 } catch (err: any) {
   console.error('[worker] Failed to load modules:', err);
   (self as any).postMessage({ type: 'error', message: `Module load failed: ${errMsg(err)}` });
@@ -207,6 +215,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 
   if (msg.type === 'init') {
     try {
+      console.log('[worker] init message received');
       if (!khBridge) throw new Error('Keyhive bridge not loaded');
 
       const mcAdapter = new MessageChannelNetworkAdapter(msg.port);
@@ -230,7 +239,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       });
 
       // Create repo with keyhive-signed network + plain storage.
-      // The subduction-tagged automerge-repo requires a subduction instance — provide a no-op stub.
+      // The subduction-tagged automerge-repo requires a subduction instance.
+      // getBlobs() bridges the subduction load path to the IndexedDB storageSubsystem,
+      // so repo.find() can load documents from local storage on the subscribe path.
       const noopSubduction = {
         storage: {},
         removeSedimentree() {},
@@ -238,7 +249,16 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         disconnectAll() {},
         disconnectFromPeer() {},
         syncAll() { return Promise.resolve({ entries() { return []; } }); },
-        getBlobs() { return Promise.resolve([]); },
+        getBlobs(sedimentreeId: any) {
+          if (!repo?.storageSubsystem) return Promise.resolve([]);
+          try {
+            const docId = toDocumentId(sedimentreeId);
+            return repo.storageSubsystem.loadDocData(docId)
+              .then((data: Uint8Array | null) => data ? [data] : []);
+          } catch {
+            return Promise.resolve([]);
+          }
+        },
         addCommit() { return Promise.resolve(undefined); },
         addFragment() { return Promise.resolve(undefined); },
       };
@@ -257,11 +277,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 
       // Track the MessageChannel peer so postStatus can exclude it
       ns.on('peer', (p: any) => {
-        if (!mcPeerId) mcPeerId = p?.peerId ?? p;
+        const pid = p?.peerId ?? p;
+        console.log('[worker] repo peer connected:', pid);
+        if (!mcPeerId) mcPeerId = pid;
       });
+      console.log('[worker] adding MessageChannel adapter');
       repo.networkSubsystem.addNetworkAdapter(mcAdapter);
 
-      console.log('[keyhive] initialized, peerId:', khIntegration.peerId);
+      console.log('[worker] init complete, peerId:', khIntegration.peerId);
       (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
       (self as any).postMessage({ type: 'ready' } satisfies WorkerToMain);
     } catch (err: any) {
@@ -569,6 +592,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 }
 
 // Replace queue handler with real handler and drain
+console.log('[worker] module loaded, queued messages:', pendingMessages.length);
 self.onmessage = handleMessage;
 for (const msg of pendingMessages) handleMessage(msg);
 pendingMessages.length = 0;

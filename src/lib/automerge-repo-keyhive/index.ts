@@ -21,10 +21,19 @@ export function initKeyhiveWasm(): void {
     return;
   }
   wasmInitialized = true;
-  initFromBase64Wasm(wasmBase64);
-  console.log(
-    `[AMRepoKeyhive-fork] WASM initialized on instance ${MODULE_INSTANCE_ID}`
-  );
+  try {
+    initFromBase64Wasm(wasmBase64);
+    console.log(
+      `[AMRepoKeyhive-fork] WASM initialized on instance ${MODULE_INSTANCE_ID}`
+    );
+  } catch (e) {
+    // In Vite builds, keyhiveWasmPlugin replaces keyhive_wasm.js with an async-fetch
+    // module that does NOT export initSync. The plugin's top-level await already
+    // initialized WASM before this function runs, so this error is safe to ignore.
+    console.log(
+      `[AMRepoKeyhive-fork] WASM already initialized by Vite plugin on instance ${MODULE_INSTANCE_ID}`
+    );
+  }
 }
 
 export function isWasmInitialized(): boolean {

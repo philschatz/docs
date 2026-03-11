@@ -77,7 +77,7 @@ export function setSyncEnabled(enabled: boolean) {
 let resolveRepoReady: () => void;
 export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
 const ns = repo.networkSubsystem;
-ns.on('peer', () => { resolveRepoReady(); });
+ns.on('peer', (p: any) => { console.log('[automerge] workerReady: peer event, peerId=', p?.peerId ?? p); resolveRepoReady(); });
 
 // Keyhive-specific ready promise — resolves when WASM + keyhive are fully initialized
 let resolveKeyhiveReady: () => void;
@@ -91,8 +91,11 @@ export async function findDocWithProgress<T>(
   docId: string,
   onProgress: (pct: number | null) => void,
 ): Promise<import('@automerge/automerge-repo').DocHandle<T>> {
+  console.log('[automerge] findDocWithProgress: waiting for workerReady, docId=', docId);
   await workerReady;
+  console.log('[automerge] findDocWithProgress: workerReady resolved, calling repo.find');
   const handle = await repo.find<T>(docId as any);
+  console.log('[automerge] findDocWithProgress: repo.find resolved, handle state=', (handle as any).state);
   onProgress(null);
   return handle;
 }

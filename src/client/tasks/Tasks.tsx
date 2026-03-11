@@ -59,7 +59,7 @@ function sortedTasks(tasks: Record<string, Task>): { uid: string; task: Task }[]
   return [...incomplete, ...done];
 }
 
-export function Tasks({ docId }: { docId?: string; path?: string }) {
+export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
   const [status, setStatus] = useState('Loading task list...');
   const [loadProgress, setLoadProgress] = useState<number | null>(null);
   const [listName, setListName] = useState('Tasks');
@@ -74,7 +74,7 @@ export function Tasks({ docId }: { docId?: string; path?: string }) {
   const handleRef = useRef<DocHandle<TaskDocument> | null>(null);
   const history = useDocumentHistory(handleRef);
   const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
-  const canEdit = history.editable && accessCanEdit;
+  const canEdit = !readOnly && history.editable && accessCanEdit;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const presenceRef = useRef<Presence<PresenceState, TaskDocument> | null>(null);
