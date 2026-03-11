@@ -23,7 +23,6 @@ export function EditorTitleBar<P extends PeerLike>({
   onToggleHistory,
   historyActive = false,
   khDocId: initialKhDocId,
-  authDocId,
   onSharingEnabled,
   sharingGroupId,
   children,
@@ -42,10 +41,8 @@ export function EditorTitleBar<P extends PeerLike>({
   historyActive?: boolean;
   /** Keyhive document ID (base64). When set, shows the share/permissions button. */
   khDocId?: string;
-  /** Auth companion doc ID for invite URL construction. */
-  authDocId?: string;
-  /** Called when sharing is first enabled, with the new khDocId, groupId, and authDocId. */
-  onSharingEnabled?: (khDocId: string, groupId: string, authDocId: string) => void;
+  /** Called when sharing is first enabled, with the new khDocId and groupId. */
+  onSharingEnabled?: (khDocId: string, groupId: string) => void;
   /** Persisted sharing group ID (needed to restore after reload). */
   sharingGroupId?: string;
   children?: ComponentChildren;
@@ -57,16 +54,16 @@ export function EditorTitleBar<P extends PeerLike>({
   // Re-register persisted sharing group with the worker on mount
   useEffect(() => {
     if (initialKhDocId) {
-      registerSharingGroup(initialKhDocId, sharingGroupId || '', authDocId).catch(() => {});
+      registerSharingGroup(initialKhDocId, sharingGroupId || '').catch(() => {});
     }
-  }, [initialKhDocId, sharingGroupId, authDocId]);
+  }, [initialKhDocId, sharingGroupId]);
 
   const handleEnableSharing = async () => {
     setEnabling(true);
     try {
-      const { khDocId: newId, groupId, authDocId: newAuthDocId } = await enableSharing();
+      const { khDocId: newId, groupId } = await enableSharing();
       setKhDocId(newId);
-      onSharingEnabled?.(newId, groupId, newAuthDocId);
+      onSharingEnabled?.(newId, groupId);
     } catch (err: any) {
       console.error('Failed to enable sharing:', err);
     } finally {
@@ -124,9 +121,8 @@ export function EditorTitleBar<P extends PeerLike>({
           <AccessControl
             khDocId={khDocId}
             docId={docId}
-            authDocId={authDocId}
             sharingGroupId={sharingGroupId}
-            onGroupIdChange={(gid) => onSharingEnabled?.(khDocId!, gid, authDocId || '')}
+            onGroupIdChange={(gid) => onSharingEnabled?.(khDocId!, gid)}
           />
         ) : docId && (
           <button

@@ -22,15 +22,13 @@ interface AccessControlProps {
   khDocId: string | undefined;
   /** Automerge document ID (for invite URL construction). */
   docId: string;
-  /** Auth companion document ID (for invite URL construction). */
-  authDocId?: string;
   /** Sharing group ID (base64-encoded). */
   sharingGroupId?: string;
   /** Called when group ID changes (e.g. recreated after reload). */
   onGroupIdChange?: (groupId: string) => void;
 }
 
-export function AccessControl({ khDocId, docId, authDocId, sharingGroupId, onGroupIdChange }: AccessControlProps) {
+export function AccessControl({ khDocId, docId, sharingGroupId, onGroupIdChange }: AccessControlProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
@@ -110,7 +108,7 @@ export function AccessControl({ khDocId, docId, authDocId, sharingGroupId, onGro
       const payloadB64 = btoa(binary)
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       const base = window.location.origin + window.location.pathname;
-      const url = `${base}#/invite/${docId}/${authDocId || '_'}/${payloadB64}`;
+      const url = `${base}#/invite/${docId}/${payloadB64}`;
       setInviteUrl(url);
     } catch (err: any) {
       setError(err.message);

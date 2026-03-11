@@ -1,7 +1,7 @@
 /**
  * Invite claiming page.
  *
- * URL format: /#/invite/{docId}/{authDocId}/{payloadBase64url}
+ * URL format: /#/invite/{docId}/{payloadBase64url}
  *
  * The payload contains an invite seed + inviter's keyhive archive.
  * It's in the URL fragment (after the hash) so it's never sent to the server.
@@ -20,7 +20,6 @@ import { claimInvite } from '../../shared/keyhive-api';
 
 interface InvitePageProps {
   docId?: string;
-  authDocId?: string;
   inviteKey?: string;
   path?: string;
 }
@@ -46,7 +45,7 @@ function docRoute(docId: string, type?: string): string {
   }
 }
 
-export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
+export function InvitePage({ docId, inviteKey }: InvitePageProps) {
   const [status, setStatus] = useState('Preparing...');
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -65,8 +64,7 @@ export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
         const { seed, archive } = decodePayload(inviteKey);
 
         setStatus('Claiming access...');
-        const realAuthDocId = (authDocId && authDocId !== '_') ? authDocId : undefined;
-        const result = await claimInvite(Array.from(seed), Array.from(archive), realAuthDocId);
+        const result = await claimInvite(Array.from(seed), Array.from(archive));
 
         if (cancelled) return;
 
@@ -75,7 +73,6 @@ export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
         addDocId(docId, {
           ...entry,
           encrypted: true,
-          authDocId: realAuthDocId,
           khDocId: result.khDocId,
         });
 
@@ -94,7 +91,7 @@ export function InvitePage({ docId, authDocId, inviteKey }: InvitePageProps) {
     })();
 
     return () => { cancelled = true; };
-  }, [docId, authDocId, inviteKey]);
+  }, [docId, inviteKey]);
 
   return (
     <div className="max-w-md mx-auto p-8 text-center">

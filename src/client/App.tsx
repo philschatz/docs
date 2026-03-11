@@ -14,7 +14,7 @@ export function App() {
     <Router history={hashHistory}>
       <Home path="/" />
       <Settings path="/settings" />
-      <InvitePage path="/invite/:docId/:authDocId/:inviteKey" />
+      <InvitePage path="/invite/:docId/:inviteKey" />
       <AllCalendars path="/calendars/" />
       <Calendar path="/calendars/:docId" />
       <Tasks path="/tasks/:docId" />

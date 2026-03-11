@@ -36,8 +36,7 @@ const worker = new Worker(
 const channel = new MessageChannel();
 
 // Main-thread repo: ephemeral, no storage, syncs with worker via MessageChannel.
-// Subduction is handled in the worker; the main-thread repo only relays via MessageChannel.
-// The new automerge-repo requires a subduction instance — provide a no-op stub for the relay repo.
+// The subduction-tagged automerge-repo requires a subduction instance — provide a no-op stub.
 const noopSubduction = {
   storage: {},
   removeSedimentree() {},

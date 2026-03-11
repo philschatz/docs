@@ -49,17 +49,17 @@ export function isMigratedDoc(entry: { legacyDocId?: string }): boolean {
  * to establish the data model. The actual encryption will be wired up
  * when the encrypted sync layer is complete.
  */
-export async function migrateDoc(docId: string): Promise<{ newDocId: string; authDocId: string }> {
+export async function migrateDoc(docId: string): Promise<{ newDocId: string }> {
   // Placeholder: in the full implementation, this calls the worker to:
   // 1. Read the unencrypted doc
-  // 2. Create a keyhive Document + auth doc
+  // 2. Create a keyhive Document
   // 3. Encrypt the content
   // 4. Create new Automerge docs
 
   // For now, mark the existing doc as "encrypted" to test the UI flow
   updateDocCache(docId, { encrypted: true } as any);
 
-  return { newDocId: docId, authDocId: '' };
+  return { newDocId: docId };
 }
 
 /**
