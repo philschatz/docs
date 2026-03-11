@@ -6,7 +6,7 @@ import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import type { PeerFieldInfo } from '../../shared/presence';
 import { usePresenceLog } from '../../shared/PresenceLog';
 import type { DataGridDocument } from './schema';
-import { migrateDataGridDocument, asMultiSheet } from './schema';
+import { asMultiSheet } from './schema';
 import { useGridCommands, commitReorder, commitAutofill, setCell, type GridCommandState, type GridCommandContext } from './commands';
 import { CommandMenuBar, CommandToolbar, CommandContextMenuContent } from './CommandBar';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
@@ -885,10 +885,6 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
       handleRef.current = handle;
       setValidationHandle(handle);
 
-      // Migrate legacy flat-structure documents
-      if (!doc.sheets) {
-        handle.change((d: any) => { migrateDataGridDocument(d); });
-      }
       const freshDoc = handle.doc()!;
 
       if (freshDoc.name) setGridName(freshDoc.name);

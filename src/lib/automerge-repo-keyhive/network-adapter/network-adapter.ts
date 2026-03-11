@@ -606,7 +606,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           );
         }
       } else {
-        this.emit("message", message);
+        throw new Error(`[AMRepoKeyhive] Received non-keyhive-signed message type=${message.type} from=${message.senderId} doc=${(message as any).documentId}`);
       }
     } catch (e) {
       console.error("[AMRepoKeyhive] Could not decode signed message:", e);

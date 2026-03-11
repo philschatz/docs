@@ -300,6 +300,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         () => eventLookupRef.current,
         () => eventsRef.current,
         (uid, data) => {
+          if (!canEditRef.current) return;
           handle.change((dd: any) => {
             if (!dd.events[uid]) dd.events[uid] = data;
             else deepAssign(dd.events[uid], data);
@@ -307,6 +308,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
           eventsRef.current = handle.doc()?.events || {};
         },
         (uid, recDate, data) => {
+          if (!canEditRef.current) return;
           handle.change((dd: any) => {
             if (!dd.events[uid].recurrenceOverrides) dd.events[uid].recurrenceOverrides = {};
             if (!dd.events[uid].recurrenceOverrides[recDate]) dd.events[uid].recurrenceOverrides[recDate] = data;
@@ -397,7 +399,9 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
             document.documentElement.style.setProperty('--cal-color', color);
             refreshCalendar();
           }}
+          disabled={!canEdit}
           onChange={(e: any) => {
+            if (!canEdit) return;
             const color = e.currentTarget.value;
             const handle = handleRef.current;
             if (handle) {
@@ -413,8 +417,10 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         value={calDesc}
         onFocus={() => { descFocusedRef.current = true; }}
         onInput={(e: any) => setCalDesc(e.currentTarget.value)}
+        readOnly={!canEdit}
         onBlur={(e: any) => {
           descFocusedRef.current = false;
+          if (!canEdit) return;
           const desc = e.currentTarget.value.trim();
           setCalDesc(desc);
           const handle = handleRef.current;
