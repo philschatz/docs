@@ -699,95 +699,98 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       }
       const maybeKeyhiveMessageData = decodeKeyhiveMessageData(message.data);
       if (maybeKeyhiveMessageData) {
-        if (verifyData(message.senderId, maybeKeyhiveMessageData)) {
-          if (!message.type?.startsWith("keyhive-")) {
-            if (this.isBatching()) {
-              this.keyhiveMsgBatch.countNonKeyhive();
-            } else {
-              this.streamingMetrics.recordNonKeyhive();
-            }
-            const rawPayload = maybeKeyhiveMessageData.signed.payload;
-            // Check write access before emitting sync messages to the repo.
-            // With a relay server, senderId is the original peer (not the server),
-            // so we can verify the sender has write permission for this document.
-            debug(`non-keyhive msg: type=${message.type} senderId=${message.senderId} documentId=${(message as any).documentId} docMapSize=${this.docMap.size}`);
-            const automergeDocId = (message as any).documentId as string | undefined;
-            if (automergeDocId && this.docMap.has(automergeDocId) &&
-                (message.type === "sync" || message.type === "change") &&
-                rawPayload && rawPayload.length > 0 &&
-                rawPayload[0] === ENC_ENCRYPTED) {
-              // Decrypt inside the queue to prevent concurrent WASM access
-              void this.keyhiveQueue.run(async () => {
-                let doc = this.docObjects.get(automergeDocId);
-                if (!doc) {
-                  // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
-                  const khDocId = this.docMap.get(automergeDocId);
-                  if (khDocId) {
-                    const fetched = await this.keyhive.getDocument(khDocId);
-                    if (fetched) {
-                      this.docObjects.set(automergeDocId, fetched);
-                      doc = fetched;
+        // Verify inside the queue to prevent concurrent WASM access (verify() is a WASM call)
+        void this.keyhiveQueue.run(async () => {
+          if (verifyData(message.senderId, maybeKeyhiveMessageData)) {
+            if (!message.type?.startsWith("keyhive-")) {
+              if (this.isBatching()) {
+                this.keyhiveMsgBatch.countNonKeyhive();
+              } else {
+                this.streamingMetrics.recordNonKeyhive();
+              }
+              const rawPayload = maybeKeyhiveMessageData.signed.payload;
+              // Check write access before emitting sync messages to the repo.
+              // With a relay server, senderId is the original peer (not the server),
+              // so we can verify the sender has write permission for this document.
+              debug(`non-keyhive msg: type=${message.type} senderId=${message.senderId} documentId=${(message as any).documentId} docMapSize=${this.docMap.size}`);
+              const automergeDocId = (message as any).documentId as string | undefined;
+              if (automergeDocId && this.docMap.has(automergeDocId) &&
+                  (message.type === "sync" || message.type === "change") &&
+                  rawPayload && rawPayload.length > 0 &&
+                  rawPayload[0] === ENC_ENCRYPTED) {
+                // Decrypt inside the queue to prevent concurrent WASM access
+                void this.keyhiveQueue.run(async () => {
+                  let doc = this.docObjects.get(automergeDocId);
+                  if (!doc) {
+                    // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
+                    const khDocId = this.docMap.get(automergeDocId);
+                    if (khDocId) {
+                      const fetched = await this.keyhive.getDocument(khDocId);
+                      if (fetched) {
+                        this.docObjects.set(automergeDocId, fetched);
+                        doc = fetched;
+                      }
                     }
                   }
-                }
-                if (!doc) {
-                  console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}, dropping message`);
-                  return;
-                }
-                try {
-                  const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
-                  const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
-                  if (!decrypted) {
-                    console.error(`[AMRepoKeyhive] tryDecrypt returned null for doc ${automergeDocId}, dropping message`);
+                  if (!doc) {
+                    console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}, dropping message`);
                     return;
                   }
-                  message.data = decrypted;
-                  debug(`Decrypted ${message.type} for doc ${automergeDocId}`);
-                  if (message.type === "sync" || message.type === "request") {
-                    void this.checkAccessAndEmit(message);
-                  } else {
-                    this.emit("message", message);
+                  try {
+                    const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
+                    const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
+                    if (!decrypted) {
+                      console.error(`[AMRepoKeyhive] tryDecrypt returned null for doc ${automergeDocId}, dropping message`);
+                      return;
+                    }
+                    message.data = decrypted;
+                    debug(`Decrypted ${message.type} for doc ${automergeDocId}`);
+                    if (message.type === "sync" || message.type === "request") {
+                      void this.checkAccessAndEmit(message);
+                    } else {
+                      this.emit("message", message);
+                    }
+                  } catch (e) {
+                    // fromBytes failed — bytes after the flag are not valid EncryptedContent.
+                    // Most likely a legacy message sent without encryption where byte[0] of the
+                    // raw automerge sync data happens to equal ENC_ENCRYPTED (0x01).
+                    // Fall back to passing rawPayload as-is so automerge sees the original bytes.
+                    console.warn(`[AMRepoKeyhive] decryptPayload failed (likely legacy unencrypted message), falling back for doc ${automergeDocId}:`, e);
+                    message.data = rawPayload;
+                    if (message.type === "sync" || message.type === "request") {
+                      void this.checkAccessAndEmit(message);
+                    } else {
+                      this.emit("message", message);
+                    }
                   }
-                } catch (e) {
-                  // fromBytes failed — bytes after the flag are not valid EncryptedContent.
-                  // Most likely a legacy message sent without encryption where byte[0] of the
-                  // raw automerge sync data happens to equal ENC_ENCRYPTED (0x01).
-                  // Fall back to passing rawPayload as-is so automerge sees the original bytes.
-                  console.warn(`[AMRepoKeyhive] decryptPayload failed (likely legacy unencrypted message), falling back for doc ${automergeDocId}:`, e);
-                  message.data = rawPayload;
-                  if (message.type === "sync" || message.type === "request") {
-                    void this.checkAccessAndEmit(message);
-                  } else {
-                    this.emit("message", message);
-                  }
-                }
-              });
+                });
+              } else {
+                // Unencrypted payload — from server relay or non-registered doc.
+                // Server doesn't have a keyhive identity so we skip the write-access
+                // check and emit directly.
+                message.data = rawPayload;
+                this.emit("message", message);
+              }
+            } else if (this.isBatching()) {
+              this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
             } else {
-              // Unencrypted payload — from server relay or non-registered doc.
-              // Server doesn't have a keyhive identity so we skip the write-access
-              // check and emit directly.
-              message.data = rawPayload;
-              this.emit("message", message);
+              this.streamingMetrics.recordMessage(
+                message.type, message.senderId,
+                maybeKeyhiveMessageData.signed.payload?.byteLength ?? 0,
+              );
+              const startTime = Date.now();
+              const msgType = message.type ?? "unknown";
+              void this.handleKeyhiveMessage(message, maybeKeyhiveMessageData, this.streamingMetrics).then(() => {
+                this.streamingMetrics.recordProcessingTime(Date.now() - startTime);
+                this.streamingMetrics.recordProcessingTimeByType(msgType, Date.now() - startTime);
+              });
             }
-          } else if (this.isBatching()) {
-            this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
           } else {
-            this.streamingMetrics.recordMessage(
-              message.type, message.senderId,
-              maybeKeyhiveMessageData.signed.payload?.byteLength ?? 0,
+            console.error(
+              `[AMRepoKeyhive] verifyData FAILED for type=${message.type} from=${message.senderId} doc=${(message as any).documentId}`
             );
-            const startTime = Date.now();
-            const msgType = message.type ?? "unknown";
-            void this.handleKeyhiveMessage(message, maybeKeyhiveMessageData, this.streamingMetrics).then(() => {
-              this.streamingMetrics.recordProcessingTime(Date.now() - startTime);
-              this.streamingMetrics.recordProcessingTimeByType(msgType, Date.now() - startTime);
-            });
           }
-        } else {
-          console.error(
-            `[AMRepoKeyhive] verifyData FAILED for type=${message.type} from=${message.senderId} doc=${(message as any).documentId}`
-          );
-        }
+        });
       } else {
         // Peer has a keyhive-looking ID but its message isn't keyhive-signed
         // (e.g. relay server whose peerId prefix happens to decode as 32 bytes).
