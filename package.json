@@ -19,7 +19,8 @@
     "cy:open": "./run-cypress.sh open",
     "cy:run": "./run-cypress.sh run",
     "stop": "pkill -f 'ts-node.*server.ts' || true",
-    "syncthing": "node syncthing-automerge/merge.js ./.data"
+    "syncthing": "node syncthing-automerge/merge.js ./.data",
+    "build:keyhive": "cd vendor/keyhive/keyhive_wasm && PATH=\"$HOME/.cargo/bin:$PATH\" npm run build-slim && cp -r pkg-slim/* ../../../node_modules/@keyhive/keyhive/pkg-slim/"
   },
   "keywords": [],
   "author": "",

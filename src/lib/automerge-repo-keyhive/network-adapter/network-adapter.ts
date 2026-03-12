@@ -5,8 +5,11 @@ import {
   PeerMetadata,
 } from "@automerge/automerge-repo/slim";
 import {
+  ChangeId,
   ContactCard,
+  Document as KeyhiveDocument,
   DocumentId as KeyhiveDocumentId,
+  Encrypted,
   Identifier,
   Keyhive,
 } from "@keyhive/keyhive/slim";
@@ -20,6 +23,8 @@ interface EventBytesResult {
 
 import {
   decodeKeyhiveMessageData,
+  ENC_ENCRYPTED,
+  ENC_PLAINTEXT,
   KeyhiveMessageData,
   signData,
   verifyData,
@@ -333,6 +338,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
 
   // CGKA encryption: maps automerge DocumentId strings to keyhive DocumentIds
   private docMap: Map<string, KeyhiveDocumentId> = new Map();
+  // Cache of fetched keyhive Document objects, keyed by automerge DocumentId
+  private docObjects: Map<string, KeyhiveDocument> = new Map();
+  // Tracks the last ChangeId used per document for pred_refs chaining
+  private lastChangeIdByDoc: Map<string, ChangeId> = new Map();
 
   // Periodic op cache (only used when cacheHashes=true)
   private opCache: OpCache | null = null;
@@ -483,6 +492,63 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
   registerDoc(automergeDocId: string, khDocId: KeyhiveDocumentId): void {
     debug(`registerDoc: ${automergeDocId} → keyhive doc`);
     this.docMap.set(automergeDocId, khDocId);
+    // Eagerly prime the Document object cache so the first encrypt doesn't stall
+    void this.getOrFetchDocument(automergeDocId);
+  }
+
+  /** Fetch (and cache) the keyhive Document for a given automerge doc ID. */
+  private async getOrFetchDocument(automergeDocId: string): Promise<KeyhiveDocument | null> {
+    const cached = this.docObjects.get(automergeDocId);
+    if (cached) return cached;
+    const khDocId = this.docMap.get(automergeDocId);
+    if (!khDocId) return null;
+    const doc = await this.keyhive.getDocument(khDocId);
+    if (doc) this.docObjects.set(automergeDocId, doc);
+    return doc ?? null;
+  }
+
+  /** Encrypt `data` bytes for a registered document. Returns flagged ciphertext or null on failure. */
+  private async encryptPayload(automergeDocId: string, data: Uint8Array): Promise<Uint8Array | null> {
+    const doc = await this.getOrFetchDocument(automergeDocId);
+    if (!doc) return null;
+    try {
+      const hashBuf = await crypto.subtle.digest('SHA-256', data as unknown as BufferSource);
+      const contentRef = new ChangeId(new Uint8Array(hashBuf));
+      const predRef = this.lastChangeIdByDoc.get(automergeDocId);
+      const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
+      this.lastChangeIdByDoc.set(automergeDocId, contentRef);
+      if (result.update_op()) {
+        // CGKA key rotation — propagate the new op via keyhive sync
+        setTimeout(() => this.syncKeyhive(), 0);
+      }
+      const encBytes = result.encrypted_content().toBytes();
+      const out = new Uint8Array(1 + encBytes.length);
+      out[0] = ENC_ENCRYPTED;
+      out.set(encBytes, 1);
+      return out;
+    } catch (e) {
+      console.error(`[AMRepoKeyhive] encryptPayload failed for doc ${automergeDocId}:`, e);
+      return null;
+    }
+  }
+
+  /** Decrypt a flagged payload. Returns plaintext bytes or null on failure. */
+  private async decryptPayload(automergeDocId: string, flaggedData: Uint8Array): Promise<Uint8Array | null> {
+    if (flaggedData.length === 0) return flaggedData;
+    if (flaggedData[0] === ENC_PLAINTEXT) return flaggedData.slice(1);
+    if (flaggedData[0] !== ENC_ENCRYPTED) return flaggedData; // legacy untagged — pass through
+    const doc = await this.getOrFetchDocument(automergeDocId);
+    if (!doc) {
+      console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}`);
+      return null;
+    }
+    try {
+      const encrypted = (Encrypted as any).fromBytes(flaggedData.slice(1));
+      return await this.keyhive.tryDecrypt(doc, encrypted);
+    } catch (e) {
+      console.error(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}:`, e);
+      return null;
+    }
   }
 
   send(message: Message, contactCard?: ContactCard): void {
@@ -499,12 +565,32 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     if (this.peerId === undefined) {
       throw new Error("peerId must be defined!");
     }
-    const data: Uint8Array =
+    let data: Uint8Array =
       "data" in message && message.data !== undefined
         ? message.data
         : new Uint8Array();
     const seqNumber = this.pending.register();
     try {
+      // Encrypt sync/change payloads for keyhive-registered documents
+      const automergeDocId = (message as any).documentId as string | undefined;
+      if (
+        automergeDocId &&
+        this.docMap.has(automergeDocId) &&
+        (message.type === "sync" || message.type === "change") &&
+        data.length > 0
+      ) {
+        const encryptedData = await this.encryptPayload(automergeDocId, data);
+        if (encryptedData) {
+          data = encryptedData;
+          debug(`Encrypted ${message.type} for doc ${automergeDocId}`);
+        } else {
+          // Encryption unavailable (doc not yet loaded) — flag as plaintext
+          const flagged = new Uint8Array(1 + data.length);
+          flagged[0] = ENC_PLAINTEXT;
+          flagged.set(data, 1);
+          data = flagged;
+        }
+      }
       const signedData = await this.keyhiveQueue.run(() =>
         signData(this.keyhive, data, contactCard)
       );
@@ -593,15 +679,42 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
             } else {
               this.streamingMetrics.recordNonKeyhive();
             }
-            message.data = maybeKeyhiveMessageData.signed.payload;
+            const rawPayload = maybeKeyhiveMessageData.signed.payload;
             // Check write access before emitting sync messages to the repo.
             // With a relay server, senderId is the original peer (not the server),
             // so we can verify the sender has write permission for this document.
             debug(`non-keyhive msg: type=${message.type} senderId=${message.senderId} documentId=${(message as any).documentId} docMapSize=${this.docMap.size}`);
-            if ((message.type === "sync" || message.type === "request") && (message as any).documentId) {
-              void this.checkAccessAndEmit(message);
+            const automergeDocId = (message as any).documentId as string | undefined;
+            if (automergeDocId && this.docMap.has(automergeDocId) &&
+                (message.type === "sync" || message.type === "change") &&
+                rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_ENCRYPTED) {
+              // Async decrypt path — fire-and-forget to avoid blocking batch processor
+              void (async () => {
+                const decrypted = await this.decryptPayload(automergeDocId, rawPayload);
+                if (!decrypted) {
+                  console.error(`[AMRepoKeyhive] decryptPayload returned null for doc ${automergeDocId}, dropping message`);
+                  return;
+                }
+                message.data = decrypted;
+                debug(`Decrypted ${message.type} for doc ${automergeDocId}`);
+                if (message.type === "sync" || message.type === "request") {
+                  void this.checkAccessAndEmit(message);
+                } else {
+                  this.emit("message", message);
+                }
+              })();
             } else {
-              this.emit("message", message);
+              // Strip ENC_PLAINTEXT flag byte if present, otherwise use as-is
+              if (rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_PLAINTEXT) {
+                message.data = rawPayload.slice(1);
+              } else {
+                message.data = rawPayload;
+              }
+              if ((message.type === "sync" || message.type === "request") && automergeDocId) {
+                void this.checkAccessAndEmit(message);
+              } else {
+                this.emit("message", message);
+              }
             }
           } else if (this.isBatching()) {
             this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
