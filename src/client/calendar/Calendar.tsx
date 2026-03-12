@@ -18,6 +18,7 @@ import { initDragDrop } from './drag-drop';
 import { EventEditor } from './EventEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
+import { DocLoader } from '../../shared/useDocument';
 
 
 interface EditorState {
@@ -44,7 +45,6 @@ function generateUid() {
 }
 
 export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
-  const [status, setStatus] = useState('Loading calendar...');
   const [calName, setCalName] = useState('Calendar');
   const [calDesc, setCalDesc] = useState('');
   const [calColor, setCalColor] = useState('#039be5');
@@ -164,10 +164,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
   }, [peerStates, editorState]);
 
   useEffect(() => {
-    if (!docId) {
-      setStatus('No document ID. Go to the home page to select a calendar.');
-      return;
-    }
+    if (!docId) return;
 
     let mounted = true;
 
@@ -247,7 +244,6 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         document.title = result.name + ' - Calendar';
       }
       if (!descFocusedRef.current) setCalDesc(result.description || '');
-      setStatus('');
       history.onNewHeads(heads);
       refreshCalendar();
 
@@ -280,6 +276,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
   return (
+    <DocLoader docId={docId}>
     <div className="calendar-page">
       <EditorTitleBar
         icon="date_range"
@@ -343,7 +340,6 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
-      {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
       <div id="sx-cal" />
       <EventEditor
         uid={editorState?.uid || ''}
@@ -365,5 +361,6 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         peerFocusedFields={peerFocusedFields}
       />
     </div>
+    </DocLoader>
   );
 }

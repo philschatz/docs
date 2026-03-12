@@ -24,6 +24,7 @@ import { useAccess } from '../../shared/useAccess';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
+import { DocLoader } from '../../shared/useDocument';
 import { registerCustomFunctions } from './hf-functions';
 import { addDocId, getDocEntry, updateDocCache } from '@/doc-storage';
 import './datagrid.css';
@@ -36,7 +37,6 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   // Read initial sheet from URL — prefer router-provided sheetId, fall back to parsing hash
   const initialSheetId = sheetId
     || (docId ? window.location.hash.match(/\/sheets\/([^/?#]+)/)?.[1] : undefined);
-  const [status, setStatus] = useState('Loading spreadsheet...');
   const [gridName, setGridName] = useState('Spreadsheet');
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const [, setTick] = useState(0);
@@ -61,7 +61,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const [viewportHeight, setViewportHeight] = useState(600);
   const ROW_HEIGHT = 28;
   const OVERSCAN = 15;
-  const [doc, setDoc] = useState<any>(null);
+  const [rawDoc, setRawDoc] = useState<any>(null);
   const docRef = useRef<DataGridDocument | null>(null);
   const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
   const validationErrors = useDocumentValidation(docId);
@@ -693,7 +693,6 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
   // Track scroll position and viewport height for row virtualization.
   // The container scrolls (not the page), so we listen on the container element.
-  // Re-run when status clears (container becomes visible).
   useEffect(() => {
     const el = tableRef.current;
     if (!el) return;
@@ -711,7 +710,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
       el.removeEventListener('scroll', handleScroll);
       ro.disconnect();
     };
-  }, [status]);
+  }, []);
 
   // Mouse drag for cell range selection
   useEffect(() => {
@@ -829,10 +828,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
   // Load document and init presence
   useEffect(() => {
-    if (!docId) {
-      setStatus('No document ID.');
-      return;
-    }
+    if (!docId) return;
 
     let mounted = true;
 
@@ -849,13 +845,12 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
         setCurrentSheetId(validInitial ?? firstSheetId);
       }
 
-      setDoc(result);
+      setRawDoc(result);
       docRef.current = d;
       if (!titleFocusedRef.current && d.name) setGridName(d.name);
       document.title = (d.name || 'Spreadsheet') + ' - Spreadsheet';
       history.onNewHeads(heads);
       scheduleSyncHyperFormula();
-      setStatus('');
     });
 
     const { broadcast, cleanup: presenceCleanup } = initPresence<PresenceState>(
@@ -1007,6 +1002,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   dispatchKeyRef.current = commands.dispatchKey;
 
   return (
+    <DocLoader docId={docId}>
     <div className="datagrid-page">
       <EditorTitleBar
         icon="grid_on"
@@ -1033,9 +1029,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
       <HistorySlider history={history} />
       <ValidationPanel errors={validationErrors} docId={docId} />
 
-      {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
-
-      {!status && columnDefs.length > 0 && doc2 && (
+      {columnDefs.length > 0 && doc2 && (
         <>
           <CommandMenuBar menus={commands.menus} />
 
@@ -1375,5 +1369,6 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
 
     </div>
+    </DocLoader>
   );
 }

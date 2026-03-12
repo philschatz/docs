@@ -33,6 +33,7 @@ export type MainToWorker =
   | { type: 'kh-register-doc-mapping'; automergeDocId: string; khDocId: string }
   | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string }
   | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; archiveBytes: number[]; automergeDocId: string }
+  | { type: 'open-doc'; id: number; docId: string }
   | { type: 'validate-subscribe'; docId: string }
   | { type: 'validate-unsubscribe'; docId: string };
 
@@ -48,6 +49,8 @@ export type WorkerToMain =
   | { type: 'result'; id: number; result?: any; error?: string }
   | { type: 'sub-result'; subId: number; result: any; heads: string[]; error?: string }
   | { type: 'presence-update'; docId: string; peers: Record<string, any> }
+  // Document loading progress
+  | { type: 'open-doc-progress'; id: number; pct: number; message: string }
   // Validation
   | { type: 'validation-result'; docId: string; errors: ValidationError[] }
   // Keyhive responses
@@ -323,6 +326,32 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       (self as any).postMessage({ type: 'result', id: msg.id, result: { docId, khDocId } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'open-doc') {
+    const post = self as any;
+    const progress = (pct: number, message: string) =>
+      post.postMessage({ type: 'open-doc-progress', id: msg.id, pct, message } satisfies WorkerToMain);
+    try {
+      progress(10, 'Finding document\u2026');
+      const handle = await getOrLoadHandle(msg.docId);
+      getOrCreateEntry(msg.docId, handle);
+      progress(50, 'Loading document data\u2026');
+      if (handle.doc()) {
+        progress(100, 'Ready');
+        post.postMessage({ type: 'result', id: msg.id, result: { docId: msg.docId } } satisfies WorkerToMain);
+      } else {
+        // Wait for doc data to arrive
+        const onReady = () => {
+          handle.off('change', onReady);
+          progress(100, 'Ready');
+          post.postMessage({ type: 'result', id: msg.id, result: { docId: msg.docId } } satisfies WorkerToMain);
+        };
+        handle.on('change', onReady);
+      }
+    } catch (err: any) {
+      post.postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 

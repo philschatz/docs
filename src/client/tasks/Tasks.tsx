@@ -14,6 +14,7 @@ import type { TaskDocument, Task } from './schema';
 import { TaskEditor } from './TaskEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
+import { DocLoader } from '../../shared/useDocument';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -59,7 +60,6 @@ function sortedTasks(tasks: Record<string, Task>): { uid: string; task: Task }[]
 }
 
 export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
-  const [status, setStatus] = useState('Loading task list...');
   const [listName, setListName] = useState('Tasks');
   const [listDesc, setListDesc] = useState('');
   const [tasks, setTasks] = useState<Record<string, Task>>({});
@@ -166,10 +166,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
   }, [peerStates, editorState]);
 
   useEffect(() => {
-    if (!docId) {
-      setStatus('No document ID. Go to the home page to select a task list.');
-      return;
-    }
+    if (!docId) return;
 
     let mounted = true;
 
@@ -190,8 +187,6 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         document.title = result.name + ' - Tasks';
       }
       if (!descFocusedRef.current) setListDesc(result.description || '');
-      setStatus('');
-
       // Update history tracking
       history.onNewHeads(heads);
 
@@ -233,6 +228,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
   const sorted = sortedTasks(tasks);
 
   return (
+    <DocLoader docId={docId}>
     <>
       <EditorTitleBar
         icon="checklist"
@@ -275,8 +271,6 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
-      {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
-
       <div className="flex items-center gap-2 mb-3">
         <Input
           placeholder="Add a task..."
@@ -284,10 +278,9 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
           onInput={(e: any) => setQuickAddText(e.currentTarget.value)}
           onKeyDown={(e: any) => { if (e.key === 'Enter') handleQuickAdd(); }}
           className="flex-1"
-          disabled={!!status}
         />
-        <Button onClick={handleQuickAdd} disabled={!!status}>Add</Button>
-        <Button variant="outline" className="text-destructive" onClick={deleteCompleted} disabled={!!status}>Delete Completed</Button>
+        <Button onClick={handleQuickAdd}>Add</Button>
+        <Button variant="outline" className="text-destructive" onClick={deleteCompleted}>Delete Completed</Button>
       </div>
 
       <div className="flex flex-col">
@@ -326,7 +319,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
             </div>
           );
         })}
-        {sorted.length === 0 && !status && (
+        {sorted.length === 0 && (
           <p className="text-sm text-muted-foreground py-4">No tasks yet. Add one above.</p>
         )}
       </div>
@@ -345,5 +338,6 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
 
       <PresenceLogTable entries={presenceLog} onClear={clearLog} />
     </>
+    </DocLoader>
   );
 }

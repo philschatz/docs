@@ -27,6 +27,8 @@ const subscriptionCallbacks = new Map<number, (result: any, heads: string[]) => 
 const presenceCallbacks = new Map<string, (peers: Record<string, PeerState<PresenceState>>) => void>();
 // Validation callbacks: docId → callback
 const validationCallbacks = new Map<string, (errors: ValidationError[]) => void>();
+// Open-doc progress callbacks: request id → callback
+const openDocProgressCallbacks = new Map<number, (pct: number, message: string) => void>();
 
 let subIdCounter = 0;
 
@@ -57,6 +59,11 @@ function handleWorkerApiMessage(msg: any): boolean {
     if (cb) cb(msg.peers);
     return true;
   }
+  if (msg.type === 'open-doc-progress') {
+    const cb = openDocProgressCallbacks.get(msg.id);
+    if (cb) cb(msg.pct, msg.message);
+    return true;
+  }
   if (msg.type === 'validation-result') {
     const cb = validationCallbacks.get(msg.docId);
     if (cb) cb(msg.errors);
@@ -83,6 +90,27 @@ function fire(type: string, payload: Record<string, any> = {}): void {
 
 export function createDoc(initialJson: any): Promise<{ docId: string; khDocId: string }> {
   return request<{ docId: string; khDocId: string }>('create-doc', { initialJson });
+}
+
+/**
+ * Explicitly open/load a document, reporting progress as it loads.
+ * Resolves once the document data is available in the worker.
+ */
+export function openDoc(
+  docId: string,
+  onProgress?: (pct: number, message: string) => void,
+): Promise<{ docId: string }> {
+  return workerReady.then(() => {
+    const id = ++idCounter;
+    if (onProgress) openDocProgressCallbacks.set(id, onProgress);
+    return new Promise<{ docId: string }>((resolve, reject) => {
+      pendingRequests.set(id, {
+        resolve: (v) => { openDocProgressCallbacks.delete(id); resolve(v); },
+        reject: (e) => { openDocProgressCallbacks.delete(id); reject(e); },
+      });
+      _worker().postMessage({ type: 'open-doc', id, docId });
+    });
+  });
 }
 
 /**
