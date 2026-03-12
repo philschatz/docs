@@ -761,41 +761,47 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                   isEncrypted) {
                 // Decrypt inside the queue to prevent concurrent WASM access
                 void this.keyhiveQueue.run(async () => {
-                  let doc = this.docObjects.get(automergeDocId);
-                  if (!doc) {
-                    // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
-                    const khDocId = this.docMap.get(automergeDocId);
-                    if (khDocId) {
-                      const fetched = await this.keyhive.getDocument(khDocId);
-                      if (fetched) {
-                        this.docObjects.set(automergeDocId, fetched);
-                        doc = fetched;
+                  console.log(`[AMRepoKeyhive] DECRYPT-TASK: starting for doc=${automergeDocId} type=${message.type} from=${message.senderId}`);
+                  try {
+                    let doc = this.docObjects.get(automergeDocId);
+                    if (!doc) {
+                      // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
+                      const khDocId = this.docMap.get(automergeDocId);
+                      console.log(`[AMRepoKeyhive] DECRYPT-TASK: cache miss, khDocId=${khDocId}`);
+                      if (khDocId) {
+                        const fetched = await this.keyhive.getDocument(khDocId);
+                        if (fetched) {
+                          this.docObjects.set(automergeDocId, fetched);
+                          doc = fetched;
+                        }
                       }
                     }
-                  }
-                  if (!doc) {
-                    console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}, dropping message`);
-                    return;
-                  }
-                  try {
-                    const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
-                    const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
-                    if (!decrypted) {
-                      console.error(`[AMRepoKeyhive] tryDecrypt returned null for doc ${automergeDocId}, dropping message`);
+                    if (!doc) {
+                      console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}, dropping message`);
                       return;
                     }
-                    message.data = decrypted;
-                    console.log(`[AMRepoKeyhive] Decrypted ${message.type} for doc ${automergeDocId}`);
-                    if (message.type === "sync" || message.type === "request") {
-                      void this.checkAccessAndEmit(message);
-                    } else {
-                      this.emit("message", message);
+                    try {
+                      const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
+                      const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
+                      if (!decrypted) {
+                        console.error(`[AMRepoKeyhive] tryDecrypt returned null for doc ${automergeDocId}, dropping message`);
+                        return;
+                      }
+                      message.data = decrypted;
+                      console.log(`[AMRepoKeyhive] Decrypted ${message.type} for doc ${automergeDocId}`);
+                      if (message.type === "sync" || message.type === "request") {
+                        void this.checkAccessAndEmit(message);
+                      } else {
+                        this.emit("message", message);
+                      }
+                    } catch (e: any) {
+                      // Decryption failed (key not yet available) — buffer for retry after keyhive sync
+                      const errDetail = e?.message?.() ?? e?.message ?? String(e);
+                      console.warn(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending): ${errDetail}`);
+                      this.pendingDecrypt.push({ message, rawPayload, automergeDocId, retries: 0 });
                     }
-                  } catch (e: any) {
-                    // Decryption failed (key not yet available) — buffer for retry after keyhive sync
-                    const errDetail = e?.message?.() ?? e?.message ?? String(e);
-                    console.warn(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending): ${errDetail}`);
-                    this.pendingDecrypt.push({ message, rawPayload, automergeDocId, retries: 0 });
+                  } catch (outerErr: any) {
+                    console.error(`[AMRepoKeyhive] DECRYPT-TASK: unexpected error for doc=${automergeDocId}:`, outerErr);
                   }
                 });
               } else if (rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_ENCRYPTED) {
@@ -1727,8 +1733,12 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         }
         try {
           const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
+          console.log(`[AMRepoKeyhive] RETRY-DECRYPT: attempt ${entry.retries + 1} for doc ${automergeDocId} from ${message.senderId}`);
           const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
-          if (!decrypted) return;
+          if (!decrypted) {
+            console.warn(`[AMRepoKeyhive] RETRY-DECRYPT: tryDecrypt returned null for doc ${automergeDocId}`);
+            return;
+          }
           message.data = decrypted;
           // CGKA keys confirmed working — end grace period early
           console.log(`[AMRepoKeyhive] retry decrypted ${message.type} for doc ${automergeDocId}`);
@@ -1737,14 +1747,15 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           } else {
             this.emit("message", message);
           }
-        } catch (e) {
+        } catch (e: any) {
           // Still can't decrypt — re-buffer if under retry limit
+          const errDetail = e?.message?.() ?? e?.message ?? String(e);
           if (entry.retries < KeyhiveNetworkAdapter.MAX_DECRYPT_RETRIES) {
             entry.retries++;
-            console.warn(`[AMRepoKeyhive] retry decrypt failed for doc ${automergeDocId} (attempt ${entry.retries}/${KeyhiveNetworkAdapter.MAX_DECRYPT_RETRIES}):`, e);
+            console.warn(`[AMRepoKeyhive] RETRY-DECRYPT failed for doc ${automergeDocId} (attempt ${entry.retries}/${KeyhiveNetworkAdapter.MAX_DECRYPT_RETRIES}): ${errDetail}`);
             this.pendingDecrypt.push(entry);
           } else {
-            console.warn(`[AMRepoKeyhive] dropping undecryptable msg for doc ${automergeDocId} after ${entry.retries} retries (encrypted with pre-membership key)`);
+            console.warn(`[AMRepoKeyhive] dropping undecryptable msg for doc ${automergeDocId} after ${entry.retries} retries: ${errDetail}`);
           }
         }
       });
