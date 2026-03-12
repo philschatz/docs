@@ -536,7 +536,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
       const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
       if (result.update_op()) {
-        // CGKA key rotation — propagate the new op via keyhive sync
+        // CGKA key rotation — invalidate caches/beliefs so the next sync
+        // does a full exchange including the new op
+        this.invalidateCaches();
+        this.invalidateBeliefs();
         setTimeout(() => this.syncKeyhive(), 0);
       }
       const encBytes = result.encrypted_content().toBytes();
@@ -625,6 +628,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
               const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
               if (result.update_op()) {
+                // New CGKA op generated — invalidate all caches and beliefs so the
+                // next syncKeyhive sends a full request (not a short-circuit check)
+                // that includes the new op.
+                this.invalidateCaches();
+                this.invalidateBeliefs();
                 setTimeout(() => this.syncKeyhive(), 0);
               }
               const encBytes = result.encrypted_content().toBytes();
