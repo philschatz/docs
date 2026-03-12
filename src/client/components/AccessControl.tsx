@@ -47,7 +47,7 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
-  const [inviteRole, setInviteRole] = useState<string>('write');
+  const [inviteRole, setInviteRole] = useState<string>('read');
   const [inviteStatuses, setInviteStatuses] = useState<InviteStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
