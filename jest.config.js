@@ -15,16 +15,19 @@ module.exports = {
       testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
       testPathIgnorePatterns: ['<rootDir>/tests/ui/'],
       transform: {
-        '^.+\\.ts$': 'ts-jest',
-        '^(?!.*(?:setup|teardown)\\.js).+\\.js$': ['ts-jest', { useESM: false }],
+        '^.+\\.ts$': ['ts-jest', { diagnostics: false }],
+        '^(?!.*(?:setup|teardown)\\.js).+\\.js$': ['ts-jest', { useESM: false, diagnostics: false }],
       },
       transformIgnorePatterns: [
-        'node_modules/(?!@automerge/)',
+        'node_modules/(?!(@automerge/|@keyhive/))',
       ],
       moduleNameMapper: {
         '^@automerge/automerge/slim$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
         '^@automerge/automerge/slim/next$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
+        '^@automerge/automerge-repo/slim$': '<rootDir>/node_modules/@automerge/automerge-repo/dist/entrypoints/slim.js',
         '^@automerge/automerge-repo-subduction-bridge$': '<rootDir>/tests/subduction-bridge-shim.js',
+        '^@keyhive/keyhive/slim$': '<rootDir>/tests/keyhive-shim.js',
+        '^@keyhive/keyhive/keyhive_wasm\\.base64\\.js$': '<rootDir>/node_modules/@keyhive/keyhive/pkg-slim/keyhive_wasm_bg.wasm.base64.js',
       },
     },
     // UI component tests (jsdom environment)
