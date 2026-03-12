@@ -316,6 +316,10 @@ class Peer {
     myTotalForThem: number;    // my hash count for them (recomputable but cached)
     theirTotalForMe: number;   // my belief about their hash count for me (learned from them)
   } | null = null;
+  // When true, forces a full sync request instead of a lightweight check.
+  // Set when new CGKA ops are generated locally (e.g., during encryption).
+  // Cleared after the full sync request is sent.
+  forceFullSync: boolean = false;
   constructor() {}
 };
 
@@ -536,10 +540,9 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
       const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
       if (result.update_op()) {
-        // CGKA key rotation — invalidate caches/beliefs so the next sync
-        // does a full exchange including the new op
+        // CGKA key rotation — force a full sync so the new op reaches all peers
         this.invalidateCaches();
-        this.invalidateBeliefs();
+        for (const peer of this.peers.values()) peer.forceFullSync = true;
         setTimeout(() => this.syncKeyhive(), 0);
       }
       const encBytes = result.encrypted_content().toBytes();
@@ -628,11 +631,9 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
               const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
               if (result.update_op()) {
-                // New CGKA op generated — invalidate all caches and beliefs so the
-                // next syncKeyhive sends a full request (not a short-circuit check)
-                // that includes the new op.
+                // New CGKA op generated — force a full sync so the new op reaches all peers
                 this.invalidateCaches();
-                this.invalidateBeliefs();
+                for (const peer of this.peers.values()) peer.forceFullSync = true;
                 setTimeout(() => this.syncKeyhive(), 0);
               }
               const encBytes = result.encrypted_content().toBytes();
@@ -703,6 +704,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.peerHasWriteAccess(message.senderId, docId)
     );
     if (hasAccess) {
+      console.log(`[AMRepoKeyhive] ACCESS-OK: emitting ${message.type} from ${message.senderId} for doc ${docId}`);
       this.emit("message", message);
     } else {
       console.warn(`[AMRepoKeyhive] DROPPED sync message from ${message.senderId} for doc ${docId} (insufficient access)`);
@@ -789,9 +791,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                     } else {
                       this.emit("message", message);
                     }
-                  } catch (e) {
+                  } catch (e: any) {
                     // Decryption failed (key not yet available) — buffer for retry after keyhive sync
-                    console.warn(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending)`);
+                    const errDetail = e?.message?.() ?? e?.message ?? String(e);
+                    console.warn(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending): ${errDetail}`);
                     this.pendingDecrypt.push({ message, rawPayload, automergeDocId, retries: 0 });
                   }
                 });
@@ -963,7 +966,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           this.send(message, maybeContactCard);
         } else {
           const peer = this.peers.get(targetId);
-          if (peer?.beliefCounts !== null && peer !== undefined) {
+          if (peer?.beliefCounts !== null && peer !== undefined && !peer.forceFullSync) {
             // Shortcut: send lightweight sync check instead of full request
             const hashes = await this.getHashesForPeerPair(senderId, targetId);
             const pendingOpHashes = await this.getCachedPendingOpHashes();
@@ -996,7 +999,8 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
             this.streamingMetrics.recordSyncCheckSent();
             this.send(message, maybeContactCard);
           } else {
-            // No belief yet — send full sync request
+            // No belief yet (or forceFullSync) — send full sync request
+            if (peer) peer.forceFullSync = false;
             const hashes = await this.getHashesForPeerPair(senderId, targetId);
             const opHashes = Array.from(hashes.values());
             const pendingOpHashes = await this.getCachedPendingOpHashes();
@@ -1010,8 +1014,8 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               targetId: targetId,
               data: data,
             };
-            debug(
-              `[AMRepoKeyhive] Sending keyhive sync request to ${targetId} from ${senderId} with ${opHashes.length} local operations and ${pendingOpHashes.length} pending operations.`
+            console.log(
+              `[AMRepoKeyhive] Sending FULL keyhive sync request to ${targetId} with ${opHashes.length} hashes and ${pendingOpHashes.length} pending`
             );
             this.send(message, maybeContactCard);
           }
