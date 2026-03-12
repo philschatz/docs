@@ -94,13 +94,6 @@ export const ready = (async () => {
     });
   }
 
-  // Request logging
-  app.use((req: Request, res: Response, next) => {
-    const { method, url } = req;
-    process.stdout.write(`→ ${method} ${url}\n`);
-    next();
-  });
-
   // Vite middleware first — serves JS/CSS/assets before UI catch-all routes
   if (vite) {
     app.use(vite.middlewares);

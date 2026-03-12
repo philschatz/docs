@@ -79,18 +79,18 @@ export async function signData(
 export function verifyData(peerId: PeerId, data: KeyhiveMessageData): boolean {
   try {
     const verifyingKeyPeerId = verifyingKeyPeerIdWithoutSuffix(peerId);
-    if (peerIdFromSigned(data.signed) !== verifyingKeyPeerId) {
-      debug(
-        "Peer id on Signed does not match provided peer id"
+    const signedPeerId = peerIdFromSigned(data.signed);
+    if (signedPeerId !== verifyingKeyPeerId) {
+      console.warn(
+        `[AMRepoKeyhive] verifyData: peer ID mismatch. Expected: ${verifyingKeyPeerId} Found: ${signedPeerId}`
       );
-      debug("[AMRepoKeyhive] Expected: " + peerId);
-      debug("[AMRepoKeyhive] Found: " + peerIdFromSigned(data.signed));
       return false;
     }
 
     if (data.signed.verify()) {
       return true;
     } else {
+      console.warn(`[AMRepoKeyhive] verifyData: signature verification failed for ${peerId}`);
       return false;
     }
   } catch (error) {
