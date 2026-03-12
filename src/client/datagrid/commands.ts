@@ -76,8 +76,8 @@ export interface GridCommandContext {
   selectedCols: Set<number>;
   clipboardRef: { current: ClipboardEntry | null };
   setClipboardSource: (r: CellRange | null) => void;
-  /** Apply a mutation to the document. Returns false from fn to skip HyperFormula sync. */
-  mutate: (fn: (doc: DataGridDocument) => boolean | void) => void;
+  /** Apply a mutation to the document. */
+  mutate: (fn: (doc: DataGridDocument) => void, args?: Record<string, unknown>, noHfSync?: boolean) => void;
   setSelectionAnchor: (anchor: [number, number] | null) => void;
   setSelectedCell: (cell: [number, number]) => void;
   setContextMenu: (m: null) => void;
@@ -297,7 +297,7 @@ const clipboardPlugin: GridPlugin = {
         const [destCol, destRow] = selectedCell;
 
         if (clipboardRef.current) {
-          // Internal paste: use snapshot row/col IDs for bounds, but write via mutate
+          // Internal paste: pre-compute everything outside mutate
           const { values, mode, range: srcRange } = clipboardRef.current;
           const { doc } = ctx;
           if (!doc) return;
@@ -305,53 +305,58 @@ const clipboardPlugin: GridPlugin = {
           const freshRowIds = sortedEntries(sh.rows).map(([id]) => id);
           const freshColIds = sortedEntries(sh.columns).map(([id]) => id);
 
+          const neededRows = destRow + values.length;
+          const neededCols = destCol + (values[0]?.length || 0);
+          const lastRowIdx = freshRowIds.length > 0 ? sortedEntries(sh.rows).slice(-1)[0][1].index : 0;
+          const lastColIdx = freshColIds.length > 0 ? sortedEntries(sh.columns).slice(-1)[0][1].index : 0;
+          const newRowEntries: Array<[string, { index: number }]> = [];
+          const newColEntries: Array<[string, { index: number; name: string }]> = [];
+          for (let i = freshRowIds.length; i < neededRows; i++) {
+            newRowEntries.push([shortId(), { index: lastRowIdx + (i - freshRowIds.length + 1) }]);
+          }
+          for (let i = freshColIds.length; i < neededCols; i++) {
+            newColEntries.push([shortId(), { index: lastColIdx + (i - freshColIds.length + 1), name: '' }]);
+          }
+          const allRowIds = [...freshRowIds, ...newRowEntries.map(([id]) => id)];
+          const allColIds = [...freshColIds, ...newColEntries.map(([id]) => id)];
+
+          const cellWrites: Array<[string, string]> = [];
+          for (let dr = 0; dr < values.length; dr++) {
+            for (let dc = 0; dc < values[dr].length; dc++) {
+              const r = destRow + dr;
+              const c = destCol + dc;
+              if (r >= allRowIds.length || c >= allColIds.length) continue;
+              const val = values[dr][dc];
+              const stored = val.startsWith('=')
+                ? a1ToInternal(val, r, c, allRowIds, allColIds)
+                : val;
+              cellWrites.push([`${allRowIds[r]}:${allColIds[c]}`, stored]);
+            }
+          }
+          const cutDeletes: string[] = [];
+          if (mode === 'cut') {
+            for (let r = srcRange.minRow; r <= srcRange.maxRow; r++) {
+              for (let c = srcRange.minCol; c <= srcRange.maxCol; c++) {
+                if (r >= allRowIds.length || c >= allColIds.length) continue;
+                const pasteR = destRow + (r - srcRange.minRow);
+                const pasteC = destCol + (c - srcRange.minCol);
+                if (pasteR === r && pasteC === c) continue;
+                cutDeletes.push(`${allRowIds[r]}:${allColIds[c]}`);
+              }
+            }
+          }
+
           mutate((d) => {
             const ms = d.sheets[currentSheetId];
-            // Add rows/columns if paste extends beyond the grid
-            const neededRows = destRow + values.length;
-            const neededCols = destCol + (values[0]?.length || 0);
-            const rowEntries = sortedEntries(ms.rows);
-            const colEntries = sortedEntries(ms.columns);
-            if (neededRows > rowEntries.length) {
-              const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
-              for (let i = rowEntries.length; i < neededRows; i++) {
-                ms.rows[shortId()] = { index: lastIdx + (i - rowEntries.length + 1) };
-              }
+            for (const [id, entry] of newRowEntries) ms.rows[id] = entry;
+            for (const [id, entry] of newColEntries) ms.columns[id] = entry;
+            for (const [key, stored] of cellWrites) {
+              if (stored === '') { delete ms.cells[key]; }
+              else if (!ms.cells[key]) { ms.cells[key] = { value: stored }; }
+              else { ms.cells[key].value = stored; }
             }
-            if (neededCols > colEntries.length) {
-              const lastIdx = colEntries.length > 0 ? colEntries[colEntries.length - 1][1].index : 0;
-              for (let i = colEntries.length; i < neededCols; i++) {
-                ms.columns[shortId()] = { index: lastIdx + (i - colEntries.length + 1), name: '' };
-              }
-            }
-            // Re-read IDs after potential expansion
-            const allRowIds = sortedEntries(ms.rows).map(([id]) => id);
-            const allColIds = sortedEntries(ms.columns).map(([id]) => id);
-            for (let dr = 0; dr < values.length; dr++) {
-              for (let dc = 0; dc < values[dr].length; dc++) {
-                const r = destRow + dr;
-                const c = destCol + dc;
-                const val = values[dr][dc];
-                const stored = val.startsWith('=')
-                  ? a1ToInternal(val, r, c, allRowIds, allColIds)
-                  : val;
-                setCell(ms.cells, `${allRowIds[r]}:${allColIds[c]}`, stored);
-              }
-            }
-            if (mode === 'cut') {
-              const cutRowIds = sortedEntries(ms.rows).map(([id]) => id);
-              const cutColIds = sortedEntries(ms.columns).map(([id]) => id);
-              for (let r = srcRange.minRow; r <= srcRange.maxRow; r++) {
-                for (let c = srcRange.minCol; c <= srcRange.maxCol; c++) {
-                  if (r >= cutRowIds.length || c >= cutColIds.length) continue;
-                  const pasteR = destRow + (r - srcRange.minRow);
-                  const pasteC = destCol + (c - srcRange.minCol);
-                  if (pasteR === r && pasteC === c) continue;
-                  delete ms.cells[`${cutRowIds[r]}:${cutColIds[c]}`];
-                }
-              }
-            }
-          });
+            for (const key of cutDeletes) delete ms.cells[key];
+          }, { currentSheetId, newRowEntries, newColEntries, cellWrites, cutDeletes });
 
           clipboardRef.current = null;
           setClipboardSource(null);
@@ -384,40 +389,50 @@ const clipboardPlugin: GridPlugin = {
             if (!rows?.length) return;
 
             const finalRows = rows;
+            // Pre-compute everything outside mutate using ctx.doc snapshot
+            const extDoc = ctx.doc;
+            if (!extDoc) return;
+            const extSh = extDoc.sheets[currentSheetId];
+            const extFreshRowIds = sortedEntries(extSh.rows).map(([id]) => id);
+            const extFreshColIds = sortedEntries(extSh.columns).map(([id]) => id);
+            const extNeededRows = destRow + finalRows.length;
+            const maxPasteCols = Math.max(...finalRows.map(r => r.length));
+            const extNeededCols = destCol + maxPasteCols;
+            const extLastRowIdx = extFreshRowIds.length > 0 ? sortedEntries(extSh.rows).slice(-1)[0][1].index : 0;
+            const extLastColIdx = extFreshColIds.length > 0 ? sortedEntries(extSh.columns).slice(-1)[0][1].index : 0;
+            const extNewRowEntries: Array<[string, { index: number }]> = [];
+            const extNewColEntries: Array<[string, { index: number; name: string }]> = [];
+            for (let i = extFreshRowIds.length; i < extNeededRows; i++) {
+              extNewRowEntries.push([shortId(), { index: extLastRowIdx + (i - extFreshRowIds.length + 1) }]);
+            }
+            for (let i = extFreshColIds.length; i < extNeededCols; i++) {
+              extNewColEntries.push([shortId(), { index: extLastColIdx + (i - extFreshColIds.length + 1), name: '' }]);
+            }
+            const extAllRowIds = [...extFreshRowIds, ...extNewRowEntries.map(([id]) => id)];
+            const extAllColIds = [...extFreshColIds, ...extNewColEntries.map(([id]) => id)];
+            const extCellWrites: Array<[string, string]> = [];
+            for (let dr = 0; dr < finalRows.length; dr++) {
+              for (let dc = 0; dc < finalRows[dr].length; dc++) {
+                const r = destRow + dr;
+                const c = destCol + dc;
+                if (r >= extAllRowIds.length || c >= extAllColIds.length) continue;
+                const val = finalRows[dr][dc];
+                const stored = val.startsWith('=')
+                  ? a1ToInternal(val, r, c, extAllRowIds, extAllColIds)
+                  : val;
+                extCellWrites.push([`${extAllRowIds[r]}:${extAllColIds[c]}`, stored]);
+              }
+            }
             mutate((d) => {
               const ms = d.sheets[currentSheetId];
-              // Add rows/columns if paste extends beyond the grid
-              const neededRows = destRow + finalRows.length;
-              const maxPasteCols = Math.max(...finalRows.map(r => r.length));
-              const neededCols = destCol + maxPasteCols;
-              const rowEntries = sortedEntries(ms.rows);
-              const colEntries = sortedEntries(ms.columns);
-              if (neededRows > rowEntries.length) {
-                const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
-                for (let i = rowEntries.length; i < neededRows; i++) {
-                  ms.rows[shortId()] = { index: lastIdx + (i - rowEntries.length + 1) };
-                }
+              for (const [id, entry] of extNewRowEntries) ms.rows[id] = entry;
+              for (const [id, entry] of extNewColEntries) ms.columns[id] = entry;
+              for (const [key, stored] of extCellWrites) {
+                if (stored === '') { delete ms.cells[key]; }
+                else if (!ms.cells[key]) { ms.cells[key] = { value: stored }; }
+                else { ms.cells[key].value = stored; }
               }
-              if (neededCols > colEntries.length) {
-                const lastIdx = colEntries.length > 0 ? colEntries[colEntries.length - 1][1].index : 0;
-                for (let i = colEntries.length; i < neededCols; i++) {
-                  ms.columns[shortId()] = { index: lastIdx + (i - colEntries.length + 1), name: '' };
-                }
-              }
-              const allRowIds = sortedEntries(ms.rows).map(([id]) => id);
-              const allColIds = sortedEntries(ms.columns).map(([id]) => id);
-              for (let dr = 0; dr < finalRows.length; dr++) {
-                for (let dc = 0; dc < finalRows[dr].length; dc++) {
-                  const r = destRow + dr;
-                  const c = destCol + dc;
-                  const val = finalRows[dr][dc];
-                  const stored = val.startsWith('=')
-                    ? a1ToInternal(val, r, c, allRowIds, allColIds)
-                    : val;
-                  setCell(ms.cells, `${allRowIds[r]}:${allColIds[c]}`, stored);
-                }
-              }
-            });
+            }, { currentSheetId, newRowEntries: extNewRowEntries, newColEntries: extNewColEntries, cellWrites: extCellWrites });
 
             setClipboardSource(null);
 
@@ -457,14 +472,13 @@ const clipboardPlugin: GridPlugin = {
                 }
               }
             }
-          });
+          }, { currentSheetId, range, sortedRowIds, sortedColIds });
         } else {
           if (col >= sortedColIds.length || row >= sortedRowIds.length) return;
           const cellKey = `${sortedRowIds[row]}:${sortedColIds[col]}`;
           ctx.mutate((d) => {
-            const cells = d.sheets[currentSheetId].cells;
-            if (getCell(cells, cellKey)) delete cells[cellKey];
-          });
+            if (d.sheets[currentSheetId].cells[cellKey]) delete d.sheets[currentSheetId].cells[cellKey];
+          }, { currentSheetId, cellKey });
         }
       },
     },
@@ -512,12 +526,13 @@ const rowPlugin: GridPlugin = {
         const minIdx = Math.min(...indices);
         const hi = entries[minIdx][1].index;
         const lo = minIdx === 0 ? hi - count : entries[minIdx - 1][1].index;
+        const newIds = Array.from({ length: count }, () => shortId());
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (let i = 0; i < count; i++) {
-            ms.rows[shortId()] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1) };
+            ms.rows[newIds[i]] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1) };
           }
-        });
+        }, { currentSheetId, count, newIds, lo, hi });
         setContextMenu(null);
       },
     },
@@ -540,12 +555,13 @@ const rowPlugin: GridPlugin = {
         const maxIdx = Math.max(...indices);
         const lo = entries[maxIdx][1].index;
         const hi = maxIdx >= entries.length - 1 ? lo + count : entries[maxIdx + 1][1].index;
+        const newIds = Array.from({ length: count }, () => shortId());
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (let i = 0; i < count; i++) {
-            ms.rows[shortId()] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1) };
+            ms.rows[newIds[i]] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1) };
           }
-        });
+        }, { currentSheetId, count, newIds, lo, hi });
         setContextMenu(null);
       },
     },
@@ -566,7 +582,7 @@ const rowPlugin: GridPlugin = {
         const newIndex = lastIdx >= entries.length - 1
           ? entries[lastIdx][1].index + 1
           : (entries[lastIdx][1].index + entries[lastIdx + 1][1].index) / 2;
-        ctx.mutate((d) => { d.sheets[currentSheetId].rows[aboveId].index = newIndex; });
+        ctx.mutate((d) => { d.sheets[currentSheetId].rows[aboveId].index = newIndex; }, { currentSheetId, aboveId, newIndex });
         setSelectedRows(new Set(indices.map(i => i - 1)));
         setContextMenu(null);
       },
@@ -588,7 +604,7 @@ const rowPlugin: GridPlugin = {
         const newIndex = firstIdx === 0
           ? entries[0][1].index - 1
           : (entries[firstIdx - 1][1].index + entries[firstIdx][1].index) / 2;
-        ctx.mutate((d) => { d.sheets[currentSheetId].rows[belowId].index = newIndex; });
+        ctx.mutate((d) => { d.sheets[currentSheetId].rows[belowId].index = newIndex; }, { currentSheetId, belowId, newIndex });
         setSelectedRows(new Set(indices.map(i => i + 1)));
         setContextMenu(null);
       },
@@ -617,8 +633,7 @@ const rowPlugin: GridPlugin = {
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (const [key, newVal] of Object.entries(rewrites)) {
-            const cell = getCell(ms.cells, key);
-            if (cell && cell.value !== newVal) cell.value = newVal;
+            if (ms.cells[key] && ms.cells[key].value !== newVal) ms.cells[key].value = newVal;
           }
           for (const id of idsToDelete) {
             delete ms.rows[id];
@@ -626,7 +641,7 @@ const rowPlugin: GridPlugin = {
               if (key.startsWith(`${id}:`)) delete ms.cells[key];
             }
           }
-        });
+        }, { currentSheetId, rewrites, idsToDelete });
         setSelectedRows(new Set());
         setContextMenu(null);
       },
@@ -679,12 +694,13 @@ const columnPlugin: GridPlugin = {
         const minIdx = Math.min(...indices);
         const hi = entries[minIdx][1].index;
         const lo = minIdx === 0 ? hi - count : entries[minIdx - 1][1].index;
+        const newIds = Array.from({ length: count }, () => shortId());
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (let i = 0; i < count; i++) {
-            ms.columns[shortId()] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1), name: '' };
+            ms.columns[newIds[i]] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1), name: '' };
           }
-        });
+        }, { currentSheetId, count, newIds, lo, hi });
         setContextMenu(null);
       },
     },
@@ -707,12 +723,13 @@ const columnPlugin: GridPlugin = {
         const maxIdx = Math.max(...indices);
         const lo = entries[maxIdx][1].index;
         const hi = maxIdx >= entries.length - 1 ? lo + count : entries[maxIdx + 1][1].index;
+        const newIds = Array.from({ length: count }, () => shortId());
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (let i = 0; i < count; i++) {
-            ms.columns[shortId()] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1), name: '' };
+            ms.columns[newIds[i]] = { index: lo + ((hi - lo) * (i + 1)) / (count + 1), name: '' };
           }
-        });
+        }, { currentSheetId, count, newIds, lo, hi });
         setContextMenu(null);
       },
     },
@@ -733,7 +750,7 @@ const columnPlugin: GridPlugin = {
         const newIndex = lastIdx >= entries.length - 1
           ? entries[lastIdx][1].index + 1
           : (entries[lastIdx][1].index + entries[lastIdx + 1][1].index) / 2;
-        ctx.mutate((d) => { d.sheets[currentSheetId].columns[leftId].index = newIndex; });
+        ctx.mutate((d) => { d.sheets[currentSheetId].columns[leftId].index = newIndex; }, { currentSheetId, leftId, newIndex });
         setSelectedCols(new Set(indices.map(i => i - 1)));
         setContextMenu(null);
       },
@@ -755,7 +772,7 @@ const columnPlugin: GridPlugin = {
         const newIndex = firstIdx === 0
           ? entries[0][1].index - 1
           : (entries[firstIdx - 1][1].index + entries[firstIdx][1].index) / 2;
-        ctx.mutate((d) => { d.sheets[currentSheetId].columns[rightId].index = newIndex; });
+        ctx.mutate((d) => { d.sheets[currentSheetId].columns[rightId].index = newIndex; }, { currentSheetId, rightId, newIndex });
         setSelectedCols(new Set(indices.map(i => i + 1)));
         setContextMenu(null);
       },
@@ -784,8 +801,7 @@ const columnPlugin: GridPlugin = {
         ctx.mutate((d) => {
           const ms = d.sheets[currentSheetId];
           for (const [key, newVal] of Object.entries(rewrites)) {
-            const cell = getCell(ms.cells, key);
-            if (cell && cell.value !== newVal) cell.value = newVal;
+            if (ms.cells[key] && ms.cells[key].value !== newVal) ms.cells[key].value = newVal;
           }
           for (const id of idsToDelete) {
             delete ms.columns[id];
@@ -793,7 +809,7 @@ const columnPlugin: GridPlugin = {
               if (key.endsWith(`:${id}`)) delete ms.cells[key];
             }
           }
-        });
+        }, { currentSheetId, rewrites, idsToDelete });
         setSelectedCols(new Set());
         setContextMenu(null);
       },
@@ -845,13 +861,12 @@ const sheetPlugin: GridPlugin = {
         const maxIndex = Object.values(doc.sheets).reduce((max, s) => Math.max(max, s.index), 0);
         const sheetCount = Object.keys(doc.sheets).length;
         const sid = shortId();
-        mutate((d) => {
-          const cols: Record<string, { index: number; name: string }> = {};
-          for (let i = 0; i < 3; i++) cols[shortId()] = { index: i + 1, name: '' };
-          const rows: Record<string, { index: number }> = {};
-          for (let i = 0; i < 10; i++) rows[shortId()] = { index: i + 1 };
-          d.sheets[sid] = { name: `Sheet ${sheetCount + 1}`, index: maxIndex + 1, columns: cols, rows, cells: {} } as any;
-        });
+        const cols: Record<string, { index: number; name: string }> = {};
+        for (let i = 0; i < 3; i++) cols[shortId()] = { index: i + 1, name: '' };
+        const rows: Record<string, { index: number }> = {};
+        for (let i = 0; i < 10; i++) rows[shortId()] = { index: i + 1 };
+        const newSheet = { '@type': 'Sheet', name: `Sheet ${sheetCount + 1}`, index: maxIndex + 1, columns: cols, rows, cells: {} };
+        mutate((d) => { d.sheets[sid] = newSheet as any; }, { sid, newSheet });
         // The DataGrid component will detect the new sheet and switch to it
       },
     },
@@ -992,7 +1007,7 @@ export function commitReorder(
     for (let i = 0; i < ids.length; i++) {
       map[ids[i]].index = prevIndex + step * (i + 1);
     }
-  });
+  }, { currentSheetId, type, ids, prevIndex, step });
 
   const newIndices = new Set(sorted.map((_, i) => adjustedDrop + i));
   if (type === 'row') setSelectedRows(newIndices);
@@ -1043,27 +1058,35 @@ export function commitAutofill(
     })
   );
 
-  mutate((d) => {
-    const ms = d.sheets[currentSheetId];
-    r1c1Strips.forEach((strip, stripIdx) => {
-      const filled = generateAutofillValues(strip, fillCount, direction);
-      filled.forEach((val, fillIdx) => {
-        let r: number, c: number;
-        if (isVertical) {
-          r = fillRange.minRow + fillIdx;
-          c = sourceRange.minCol + stripIdx;
-        } else {
-          r = sourceRange.minRow + stripIdx;
-          c = fillRange.minCol + fillIdx;
-        }
-        if (r >= freshRowIds.length || c >= freshColIds.length) return;
-        const stored = val.startsWith('=')
-          ? a1ToInternal(val, r, c, freshRowIds, freshColIds)
-          : val;
-        setCell(ms.cells, `${freshRowIds[r]}:${freshColIds[c]}`, stored);
-      });
+  // Pre-compute all cell writes
+  const cellWrites: Array<[string, string]> = [];
+  r1c1Strips.forEach((strip, stripIdx) => {
+    const filled = generateAutofillValues(strip, fillCount, direction);
+    filled.forEach((val, fillIdx) => {
+      let r: number, c: number;
+      if (isVertical) {
+        r = fillRange.minRow + fillIdx;
+        c = sourceRange.minCol + stripIdx;
+      } else {
+        r = sourceRange.minRow + stripIdx;
+        c = fillRange.minCol + fillIdx;
+      }
+      if (r >= freshRowIds.length || c >= freshColIds.length) return;
+      const stored = val.startsWith('=')
+        ? a1ToInternal(val, r, c, freshRowIds, freshColIds)
+        : val;
+      cellWrites.push([`${freshRowIds[r]}:${freshColIds[c]}`, stored]);
     });
   });
+
+  mutate((d) => {
+    const ms = d.sheets[currentSheetId];
+    for (const [key, stored] of cellWrites) {
+      if (stored === '') { delete ms.cells[key]; }
+      else if (!ms.cells[key]) { ms.cells[key] = { value: stored }; }
+      else { ms.cells[key].value = stored; }
+    }
+  }, { currentSheetId, cellWrites });
 
   // Extend selection to cover source + fill range
   const totalRange = {

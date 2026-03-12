@@ -72,7 +72,7 @@ export function AllCalendars({ path }: { path?: string }) {
   const calendarSXRef = useRef<any>(null);
   const editorStateRef = useRef(editorState);
   editorStateRef.current = editorState;
-  const presenceMapRef = useRef<Map<string, { presence: Presence<PresenceState, CalendarDocument>; cleanup: () => void }>>(new Map());
+  const presenceMapRef = useRef<Map<string, { broadcast: (key: keyof PresenceState, value: any) => void; cleanup: () => void }>>(new Map());
 
   const refreshCalendar = useCallback(() => {
     const range = currentRangeRef.current;
@@ -208,8 +208,8 @@ export function AllCalendars({ path }: { path?: string }) {
   // Broadcast presence focus field changes
   useEffect(() => {
     if (!editorState) {
-      for (const { presence } of presenceMapRef.current.values()) {
-        if (presence.running) presence.broadcast('focusedField', null);
+      for (const { broadcast } of presenceMapRef.current.values()) {
+        broadcast('focusedField', null);
       }
     }
   }, [editorState]);
@@ -218,7 +218,7 @@ export function AllCalendars({ path }: { path?: string }) {
     const es = editorStateRef.current;
     if (!es) return;
     const entry = presenceMapRef.current.get(es.calDocId);
-    if (entry?.presence?.running) entry.presence.broadcast('focusedField', path);
+    entry?.broadcast('focusedField', path);
   }, []);
 
   const peerFocusedFields = useMemo(() => {
@@ -285,8 +285,8 @@ export function AllCalendars({ path }: { path?: string }) {
       // Set up presence for each calendar
       const allPeerStates: Record<string, PeerState<PresenceState>> = {};
       for (const cal of loaded) {
-        const { presence, cleanup } = initPresence<PresenceState>(
-          cal.handle,
+        const { broadcast, cleanup } = initPresence<PresenceState>(
+          cal.docId,
           () => ({ viewing: true, focusedField: null }),
           (states) => {
             if (!mounted) return;
@@ -304,7 +304,7 @@ export function AllCalendars({ path }: { path?: string }) {
             });
           },
         );
-        presenceMapRef.current.set(cal.docId, { presence, cleanup });
+        presenceMapRef.current.set(cal.docId, { broadcast, cleanup });
       }
 
       // Initialize schedule-x calendar

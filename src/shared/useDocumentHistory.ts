@@ -1,9 +1,7 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from 'preact/hooks';
-import { Automerge } from './automerge';
-import type { DocHandle } from './automerge';
-import type { State } from '@automerge/automerge';
+import { useState, useRef, useCallback } from 'preact/hooks';
+import { getDocHistory, setDocVersion, restoreDocToVersion } from '../client/worker-api';
 
-export interface DocumentHistory<T> {
+export interface DocumentHistory {
   /** Whether history mode is active */
   active: boolean;
   /** Whether the document can be edited (false when viewing a past version) */
@@ -14,124 +12,97 @@ export interface DocumentHistory<T> {
   version: number;
   /** Total number of changes in history */
   changeCount: number;
-  /** Historical snapshot when viewing a past version, null otherwise */
-  snapshot: T | null;
   /** Timestamp of the current history entry */
   time: number | null;
   /** Toggle history mode on/off */
   toggleHistory: () => void;
-  /** Set version from slider */
+  /** Set version from slider — worker immediately re-runs subscriptions */
   onSliderChange: (version: number) => void;
   /** Jump to the latest version */
   jumpToLatest: () => void;
   /** Undo all changes after the current version */
   undoToVersion: () => void;
+  /**
+   * Call this from your subscribeQuery callback with the new heads.
+   * Used to track when new changes arrive while in history mode.
+   */
+  onNewHeads: (heads: string[]) => void;
 }
 
-export function useDocumentHistory<T>(handleRef: { current: DocHandle<T> | null }): DocumentHistory<T> {
-  const [entries, setEntries] = useState<State<T>[]>([]);
+export function useDocumentHistory(docId: string): DocumentHistory {
+  const [entries, setEntries] = useState<Array<{ version: number; time: number }>>([]);
   const [version, setVersion] = useState(-1);
   const [changeCount, setChangeCount] = useState(0);
-  const historyStaleRef = useRef(false);
   const atLatestRef = useRef(true);
 
   const active = version >= 0;
   const isLatest = !active || version === changeCount - 1;
   const editable = !active || isLatest;
 
-  const loadHistory = useCallback(() => {
-    const handle = handleRef.current;
-    if (!handle) return null;
-    const doc = handle.doc();
-    if (!doc) return null;
-    try {
-      const h = Automerge.getHistory(doc);
-      setEntries(h);
-      setChangeCount(h.length);
-      historyStaleRef.current = false;
-      return h;
-    } catch (e) {
-      console.error('Failed to load history:', e);
-      return null;
-    }
-  }, []);
+  const loadHistory = useCallback(async () => {
+    const h = await getDocHistory(docId);
+    setEntries(h);
+    setChangeCount(h.length);
+    return h;
+  }, [docId]);
 
-  const toggleHistory = useCallback(() => {
+  const toggleHistory = useCallback(async () => {
     if (active) {
+      setDocVersion(docId, null);
       setVersion(-1);
       setEntries([]);
       setChangeCount(0);
       atLatestRef.current = true;
       return;
     }
-    const h = loadHistory();
-    if (h) {
+    const h = await loadHistory();
+    if (h.length > 0) {
       setVersion(h.length - 1);
       atLatestRef.current = true;
+      // Pin to latest version so subscription shows historical snapshot
+      setDocVersion(docId, h.length - 1);
     }
-  }, [active, loadHistory]);
-
-  // Track new changes while in history mode
-  useEffect(() => {
-    if (!active) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    const onChange = () => {
-      historyStaleRef.current = true;
-      if (atLatestRef.current) {
-        setChangeCount(prev => prev + 1);
-        setVersion(prev => prev + 1);
-      }
-    };
-    handle.on('change', onChange);
-    return () => { handle.off('change', onChange); };
-  }, [active, handleRef.current]);
+  }, [active, docId, loadHistory]);
 
   const onSliderChange = useCallback((v: number) => {
-    const latest = v === changeCount - 1;
-    atLatestRef.current = latest;
-    if (!latest && historyStaleRef.current) {
-      loadHistory();
-    }
+    atLatestRef.current = v === changeCount - 1;
     setVersion(v);
-  }, [changeCount, loadHistory]);
+    setDocVersion(docId, v);
+  }, [docId, changeCount]);
 
   const jumpToLatest = useCallback(() => {
     atLatestRef.current = true;
-    const h = historyStaleRef.current ? loadHistory() : null;
-    setVersion(h ? h.length - 1 : changeCount - 1);
-  }, [changeCount, loadHistory]);
+    setVersion(changeCount - 1);
+    setDocVersion(docId, null);
+  }, [docId, changeCount]);
 
-  const undoToVersion = useCallback(() => {
-    const handle = handleRef.current;
-    if (!handle || !active || isLatest) return;
-    const snap = entries[version]?.snapshot;
-    if (!snap) return;
-    const plain = JSON.parse(JSON.stringify(snap));
-    handle.change((d: any) => {
-      // Remove keys not in snapshot
-      for (const key of Object.keys(d)) {
-        if (!(key in plain)) delete d[key];
-      }
-      // Copy snapshot keys (deep-assign handles nested merge)
-      for (const [key, val] of Object.entries(plain)) {
-        (d as any)[key] = val;
-      }
-    });
-    // Jump to latest after undo
-    const h = loadHistory();
-    if (h) {
-      atLatestRef.current = true;
-      setVersion(h.length - 1);
+  const undoToVersion = useCallback(async () => {
+    if (!active || isLatest) return;
+    await restoreDocToVersion(docId, version);
+    // Worker clears pinnedVersion after restore; exit history mode
+    setDocVersion(docId, null);
+    setVersion(-1);
+    setEntries([]);
+    setChangeCount(0);
+    atLatestRef.current = true;
+  }, [active, isLatest, docId, version]);
+
+  /**
+   * Called by editor's subscribeQuery callback when new heads arrive.
+   * When at latest in history mode, advance the slider to track new changes.
+   */
+  const onNewHeads = useCallback((_heads: string[]) => {
+    if (!active) return;
+    if (atLatestRef.current) {
+      setChangeCount(prev => {
+        const next = prev + 1;
+        setVersion(next - 1);
+        return next;
+      });
     }
-  }, [active, isLatest, version, entries, loadHistory]);
+  }, [active]);
 
-  const snapshot = useMemo<T | null>(() => {
-    if (!active || isLatest) return null;
-    return entries[version]?.snapshot ?? null;
-  }, [active, isLatest, version, entries]);
-
-  const time = active && entries[version] ? entries[version].change.time : null;
+  const time = active && entries[version] ? entries[version].time : null;
 
   return {
     active,
@@ -139,11 +110,11 @@ export function useDocumentHistory<T>(handleRef: { current: DocHandle<T> | null 
     isLatest,
     version,
     changeCount,
-    snapshot,
     time,
     toggleHistory,
     onSliderChange,
     jumpToLatest,
     undoToVersion,
+    onNewHeads,
   };
 }

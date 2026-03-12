@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
-import { findDocWithProgress } from '../../shared/automerge';
-import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
+import { subscribeQuery, updateDoc } from '../worker-api';
+import type { PeerState } from '../../shared/automerge';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { useDocumentHistory } from '../../shared/useDocumentHistory';
@@ -18,8 +18,6 @@ import { initDragDrop } from './drag-drop';
 import { EventEditor } from './EventEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
-import { Progress } from '@/components/ui/progress';
-import { addDocId } from '@/doc-storage';
 
 
 interface EditorState {
@@ -30,6 +28,7 @@ interface EditorState {
   isNew: boolean;
 }
 
+const CALENDAR_QUERY = '{ events: (.events // {}), name: (.name // "Calendar"), description: (.description // ""), color: (.color // "#039be5"), timeZone: .timeZone }';
 
 const PATH_PROP_TO_FIELDS: Record<string, string[]> = {
   title: ['ed-title'],
@@ -46,17 +45,15 @@ function generateUid() {
 
 export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
   const [status, setStatus] = useState('Loading calendar...');
-  const [loadProgress, setLoadProgress] = useState<number | null>(null);
   const [calName, setCalName] = useState('Calendar');
   const [calDesc, setCalDesc] = useState('');
   const [calColor, setCalColor] = useState('#039be5');
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
+  const [doc, setDoc] = useState<any>(null);
 
-  const [validationHandle, setValidationHandle] = useState<DocHandle<CalendarDocument> | null>(null);
-  const validationErrors = useDocumentValidation(validationHandle);
-  const handleRef = useRef<DocHandle<CalendarDocument> | null>(null);
-  const history = useDocumentHistory(handleRef);
+  const history = useDocumentHistory(docId!);
+  const validationErrors = useDocumentValidation(doc);
   const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
   const canEdit = !readOnly && history.editable && accessCanEdit;
   const canEditRef = useRef(canEdit);
@@ -68,7 +65,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
   const calendarRef = useRef<any>(null);
   const calColorRef = useRef('#039be5');
   const calTZRef = useRef(Intl.DateTimeFormat().resolvedOptions().timeZone);
-  const presenceRef = useRef<Presence<PresenceState, CalendarDocument> | null>(null);
+  const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
   const presenceCleanupRef = useRef<(() => void) | null>(null);
   const editorStateRef = useRef(editorState);
   editorStateRef.current = editorState;
@@ -87,10 +84,8 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
   }, []);
 
   const saveEvent = useCallback((uid: string, eventData: CalendarEvent) => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => {
+    if (!canEditRef.current || !docId) return;
+    updateDoc(docId, (d) => {
       if (!d.events[uid]) {
         const clean: any = {};
         for (const key in eventData) {
@@ -100,38 +95,28 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
       } else {
         deepAssign(d.events[uid], eventData);
       }
-    });
-    eventsRef.current = handle.doc()?.events || {};
+    }, { uid, eventData });
     setEditorState(null);
-    refreshCalendar();
-  }, [refreshCalendar]);
+  }, [docId]);
 
   const saveOverride = useCallback((uid: string, recurrenceDate: string, overrideData: any) => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => {
+    if (!canEditRef.current || !docId) return;
+    updateDoc(docId, (d) => {
       if (!d.events[uid].recurrenceOverrides) d.events[uid].recurrenceOverrides = {};
       if (!d.events[uid].recurrenceOverrides[recurrenceDate]) {
         d.events[uid].recurrenceOverrides[recurrenceDate] = overrideData;
       } else {
         deepAssign(d.events[uid].recurrenceOverrides[recurrenceDate], overrideData);
       }
-    });
-    eventsRef.current = handle.doc()?.events || {};
+    }, { uid, recurrenceDate, overrideData });
     setEditorState(null);
-    refreshCalendar();
-  }, [refreshCalendar]);
+  }, [docId]);
 
   const deleteEvent = useCallback((uid: string) => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => { delete d.events[uid]; });
-    eventsRef.current = handle.doc()?.events || {};
+    if (!canEditRef.current || !docId) return;
+    updateDoc(docId, (d) => { delete d.events[uid]; }, { uid });
     setEditorState(null);
-    refreshCalendar();
-  }, [refreshCalendar]);
+  }, [docId]);
 
   const deleteOccurrence = useCallback((uid: string, recurrenceDate: string) => {
     saveOverride(uid, recurrenceDate, { excluded: true });
@@ -156,17 +141,11 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
   }, []);
 
   useEffect(() => {
-    const p = presenceRef.current;
-    if (!p || !p.running) return;
-    if (!editorState) {
-      p.broadcast('focusedField', null);
-    }
+    if (!editorState) broadcastRef.current?.('focusedField', null);
   }, [editorState]);
 
   const handleFieldFocus = useCallback((path: (string | number)[] | null) => {
-    const p = presenceRef.current;
-    if (!p || !p.running) return;
-    p.broadcast('focusedField', path);
+    broadcastRef.current?.('focusedField', path);
   }, []);
 
   const peerFocusedFields = useMemo(() => {
@@ -180,9 +159,7 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
       const inputIds = PATH_PROP_TO_FIELDS[prop];
       if (inputIds) {
         const info = { color: peerColor(peer.peerId), peerId: peer.peerId };
-        for (const id of inputIds) {
-          result[id] = info;
-        }
+        for (const id of inputIds) result[id] = info;
       }
     }
     return result;
@@ -196,167 +173,112 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
 
     let mounted = true;
 
-    (async () => {
-      setLoadProgress(0);
-      const handle = await findDocWithProgress<CalendarDocument>(docId, setLoadProgress);
-      const doc = handle.doc();
-      if (!mounted) return;
-      if (!doc) { setStatus('Document not found. Check the URL.'); return; }
+    // Initialize SX calendar synchronously (will be populated by subscription)
+    const now = new Date();
+    const initStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const initEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+    currentRangeRef.current = { start: toDateStr(initStart), end: toDateStr(initEnd) };
 
-      addDocId(docId, { type: 'Calendar', name: doc.name });
-      handleRef.current = handle;
-      setValidationHandle(handle);
-      eventsRef.current = doc.events || {};
-      if (doc.timeZone) calTZRef.current = doc.timeZone;
-      if (doc.color) {
-        calColorRef.current = doc.color;
-        setCalColor(doc.color);
-        document.documentElement.style.setProperty('--cal-color', doc.color);
-      }
-      if (doc.name) setCalName(doc.name);
-      if (doc.description) setCalDesc(doc.description);
-      document.title = (doc.name || 'Calendar') + ' - Calendar';
-      setStatus('');
-
-      const { presence, cleanup: presenceCleanup } = initPresence<PresenceState>(
-        handle,
-        () => ({ viewing: true, focusedField: null }),
-        (states) => { if (mounted) setPeerStates(states); },
-      );
-      presenceRef.current = presence;
-      presenceCleanupRef.current = presenceCleanup;
-
-      const now = new Date();
-      const initStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const initEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-      currentRangeRef.current = { start: toDateStr(initStart), end: toDateStr(initEnd) };
-
-      const expanded = rebuildExpanded(eventsRef.current, currentRangeRef.current.start, currentRangeRef.current.end);
-      const { sxEvents, eventLookup } = mapToSXEvents(expanded, calTZRef.current, calColorRef.current);
-      eventLookupRef.current = eventLookup;
-
-      let lastRangeKey = '';
-      const calEl = document.getElementById('sx-cal')!;
-      const { calendar, eventsPlugin } = createSXCalendar(calEl, sxEvents, calTZRef.current, calColorRef.current, {
-        onEventClick: (event: any) => {
-          const item = eventLookupRef.current[event.id];
-          if (item) openEditor(item.uid, item.ev, null, item.recurrenceDate);
-        },
-        onClickDate: (date: any) => {
-          openEditor(null, null, date.toString(), null);
-        },
-        onClickDateTime: (dateTime: any) => {
-          openEditor(null, null, dateTime.toPlainDate().toString(), null);
-        },
-        onRangeUpdate: (range: any) => {
-          const start = range.start.toString().substring(0, 10);
-          const end = range.end.toString().substring(0, 10);
-          const key = start + ':' + end;
-          if (key === lastRangeKey) return;
-          lastRangeKey = key;
-          currentRangeRef.current = { start, end };
-          refreshCalendar();
-        },
-      });
-      calendarRef.current = calendar;
-      eventsPluginRef.current = eventsPlugin;
-
-      handle.on('change', () => {
-        const d = handle.doc();
-        if (!d) return;
-        eventsRef.current = d.events || {};
-        if (d.name && !titleFocusedRef.current) {
-          setCalName(d.name);
-          document.title = d.name + ' - Calendar';
-        }
-        if (!descFocusedRef.current) setCalDesc(d.description || '');
-        if (d.color && d.color !== calColorRef.current) {
-          calColorRef.current = d.color;
-          setCalColor(d.color);
-          document.documentElement.style.setProperty('--cal-color', d.color);
-        }
-
-        const es = editorStateRef.current;
-        if (es && !es.isNew) {
-          const fresh = eventsRef.current[es.uid];
-          if (fresh) {
-            setEditorState(prev => {
-              if (!prev || prev.uid !== es.uid) return prev;
-              if (prev.recurrenceDate) {
-                return { ...prev, masterEvent: fresh };
-              }
-              return { ...prev, event: fresh, masterEvent: fresh };
-            });
-          } else {
-            setEditorState(null);
-          }
-        }
-
+    const calEl = document.getElementById('sx-cal')!;
+    let lastRangeKey = '';
+    const { calendar, eventsPlugin } = createSXCalendar(calEl, [], calTZRef.current, calColorRef.current, {
+      onEventClick: (event: any) => {
+        const item = eventLookupRef.current[event.id];
+        if (item) openEditor(item.uid, item.ev, null, item.recurrenceDate);
+      },
+      onClickDate: (date: any) => {
+        openEditor(null, null, date.toString(), null);
+      },
+      onClickDateTime: (dateTime: any) => {
+        openEditor(null, null, dateTime.toPlainDate().toString(), null);
+      },
+      onRangeUpdate: (range: any) => {
+        const start = range.start.toString().substring(0, 10);
+        const end = range.end.toString().substring(0, 10);
+        const key = start + ':' + end;
+        if (key === lastRangeKey) return;
+        lastRangeKey = key;
+        currentRangeRef.current = { start, end };
         refreshCalendar();
-      });
+      },
+    });
+    calendarRef.current = calendar;
+    eventsPluginRef.current = eventsPlugin;
 
-      initDragDrop(
-        calEl,
-        () => eventLookupRef.current,
-        () => eventsRef.current,
-        (uid, data) => {
-          if (!canEditRef.current) return;
-          handle.change((dd: any) => {
-            if (!dd.events[uid]) dd.events[uid] = data;
-            else deepAssign(dd.events[uid], data);
+    initDragDrop(
+      calEl,
+      () => eventLookupRef.current,
+      () => eventsRef.current,
+      (uid, data) => {
+        if (!canEditRef.current) return;
+        updateDoc(docId, (d) => {
+          if (!d.events[uid]) d.events[uid] = data;
+          else deepAssign(d.events[uid], data);
+        }, { uid, data });
+      },
+      (uid, recDate, data) => {
+        if (!canEditRef.current) return;
+        updateDoc(docId, (d) => {
+          if (!d.events[uid].recurrenceOverrides) d.events[uid].recurrenceOverrides = {};
+          if (!d.events[uid].recurrenceOverrides[recDate]) d.events[uid].recurrenceOverrides[recDate] = data;
+          else deepAssign(d.events[uid].recurrenceOverrides[recDate], data);
+        }, { uid, recDate, data });
+      },
+      refreshCalendar,
+    );
+
+    const { broadcast, cleanup: presenceCleanup } = initPresence<PresenceState>(
+      docId,
+      () => ({ viewing: true, focusedField: null }),
+      (states) => { if (mounted) setPeerStates(states); },
+    );
+    broadcastRef.current = broadcast;
+    presenceCleanupRef.current = presenceCleanup;
+
+    const unsubscribe = subscribeQuery(docId, CALENDAR_QUERY, (result, heads) => {
+      if (!mounted || !result) return;
+      setDoc(result);
+      eventsRef.current = result.events || {};
+      if (result.timeZone) calTZRef.current = result.timeZone;
+      if (result.color && result.color !== calColorRef.current) {
+        calColorRef.current = result.color;
+        setCalColor(result.color);
+        document.documentElement.style.setProperty('--cal-color', result.color);
+      }
+      if (result.name && !titleFocusedRef.current) {
+        setCalName(result.name);
+        document.title = result.name + ' - Calendar';
+      }
+      if (!descFocusedRef.current) setCalDesc(result.description || '');
+      setStatus('');
+      history.onNewHeads(heads);
+      refreshCalendar();
+
+      const es = editorStateRef.current;
+      if (es && !es.isNew) {
+        const fresh = eventsRef.current[es.uid];
+        if (fresh) {
+          setEditorState(prev => {
+            if (!prev || prev.uid !== es.uid) return prev;
+            if (prev.recurrenceDate) return { ...prev, masterEvent: fresh };
+            return { ...prev, event: fresh, masterEvent: fresh };
           });
-          eventsRef.current = handle.doc()?.events || {};
-        },
-        (uid, recDate, data) => {
-          if (!canEditRef.current) return;
-          handle.change((dd: any) => {
-            if (!dd.events[uid].recurrenceOverrides) dd.events[uid].recurrenceOverrides = {};
-            if (!dd.events[uid].recurrenceOverrides[recDate]) dd.events[uid].recurrenceOverrides[recDate] = data;
-            else deepAssign(dd.events[uid].recurrenceOverrides[recDate], data);
-          });
-          eventsRef.current = handle.doc()?.events || {};
-        },
-        refreshCalendar
-      );
-    })().catch((err) => {
-      if (!mounted) return;
-      const msg = err?.message || 'Failed to load document';
-      setStatus(msg);
-      setLoadProgress(null);
+        } else {
+          setEditorState(null);
+        }
+      }
     });
 
     return () => {
       mounted = false;
-      setValidationHandle(null);
       calendarRef.current?.destroy();
       calendarRef.current = null;
       presenceCleanupRef.current?.();
-      presenceRef.current = null;
+      broadcastRef.current = null;
       presenceCleanupRef.current = null;
+      unsubscribe();
     };
   }, [docId, openEditor, refreshCalendar]);
-
-  // Swap calendar events when browsing history
-  useEffect(() => {
-    if (!history.active) return;
-    if (history.snapshot) {
-      eventsRef.current = history.snapshot.events || {};
-    } else {
-      eventsRef.current = handleRef.current?.doc()?.events || {};
-    }
-    if (!canEdit) setEditorState(null);
-    refreshCalendar();
-  }, [history.snapshot, history.active, canEdit, refreshCalendar]);
-
-  // Restore live events when exiting history mode
-  useEffect(() => {
-    if (history.active) return;
-    const doc = handleRef.current?.doc();
-    if (doc) {
-      eventsRef.current = doc.events || {};
-      refreshCalendar();
-    }
-  }, [history.active, refreshCalendar]);
 
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
@@ -370,13 +292,11 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         onTitleChange={setCalName}
         onTitleBlur={(value) => {
           titleFocusedRef.current = false;
+          if (!docId || !canEdit) return;
           const name = value.trim() || 'Calendar';
           setCalName(name);
-          const handle = handleRef.current;
-          if (handle) {
-            handle.change((d: any) => { d.name = name; });
-            document.title = name + ' - Calendar';
-          }
+          updateDoc(docId, (d) => { d.name = name; }, { name });
+          document.title = name + ' - Calendar';
         }}
         docId={docId}
         peers={peerList}
@@ -401,12 +321,9 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
           }}
           disabled={!canEdit}
           onChange={(e: any) => {
-            if (!canEdit) return;
+            if (!canEdit || !docId) return;
             const color = e.currentTarget.value;
-            const handle = handleRef.current;
-            if (handle) {
-              handle.change((d: any) => { d.color = color; });
-            }
+            updateDoc(docId, (d) => { d.color = color; }, { color });
           }}
         />
       </EditorTitleBar>
@@ -420,20 +337,14 @@ export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boole
         readOnly={!canEdit}
         onBlur={(e: any) => {
           descFocusedRef.current = false;
-          if (!canEdit) return;
+          if (!canEdit || !docId) return;
           const desc = e.currentTarget.value.trim();
           setCalDesc(desc);
-          const handle = handleRef.current;
-          if (handle) {
-            handle.change((d: any) => { d.description = desc || undefined; });
-          }
+          updateDoc(docId, (d) => { d.description = desc || undefined; }, { desc });
         }}
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
-      {loadProgress !== null && (
-        <Progress className="my-1" value={loadProgress} />
-      )}
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
       <div id="sx-cal" />
       <EventEditor

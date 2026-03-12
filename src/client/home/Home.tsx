@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
-import { repo, useConnectionStatus, usePeerList, isSyncEnabled, setSyncEnabled, workerReady, subscribeHome } from '../../shared/automerge';
-import type { DocSummary } from '../../shared/automerge';
+import { useConnectionStatus, usePeerList, isSyncEnabled, setSyncEnabled } from '../../shared/automerge';
+import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
 import { peerColor } from '../../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
@@ -56,20 +56,13 @@ function initialEntries(): DocEntry[] {
   }));
 }
 
-function applyDocSummary(prev: DocEntry[], summary: DocSummary): DocEntry[] {
+function applyQueryResult(prev: DocEntry[], docId: string, result: any): DocEntry[] {
   return prev.map(e => {
-    if (e.documentId !== summary.docId) return e;
-    const type = (summary.type === 'Calendar' || summary.type === 'TaskList' || summary.type === 'DataGrid')
-      ? summary.type as DocType : 'unknown';
-    return {
-      ...e,
-      type,
-      name: summary.name || e.name,
-      count: summary.count,
-      lastUpdated: summary.lastModified,
-      loading: false,
-      peers: summary.peers,
-    };
+    if (e.documentId !== docId) return e;
+    const type = (result.type === 'Calendar' || result.type === 'TaskList' || result.type === 'DataGrid')
+      ? result.type as DocType : 'unknown';
+    const count = result.eventCount || result.taskCount || result.rowCount || null;
+    return { ...e, type, name: result.name || e.name, count, loading: false };
   });
 }
 
@@ -81,16 +74,21 @@ export function Home({ path }: { path?: string }) {
   const repoPeers = usePeerList();
 
   // Subscribe to doc summaries from the worker
+  const docIdKey = entries.map(e => e.documentId).join(',');
   useEffect(() => {
-    const docIds = entries.map(e => e.documentId);
+    const docIds = docIdKey ? docIdKey.split(',') : [];
     if (docIds.length === 0) return;
-    return subscribeHome(docIds, (summary) => {
-      const type = (summary.type === 'Calendar' || summary.type === 'TaskList' || summary.type === 'DataGrid')
-        ? summary.type as DocType : 'unknown';
-      updateDocCache(summary.docId, { type, name: summary.name });
-      setEntries(prev => applyDocSummary(prev, summary));
-    });
-  }, [entries.map(e => e.documentId).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    const unsubs = docIds.map(docId =>
+      subscribeQuery(docId, HOME_SUMMARY_QUERY, (result) => {
+        if (!result) return;
+        const type = (result.type === 'Calendar' || result.type === 'TaskList' || result.type === 'DataGrid')
+          ? result.type as DocType : 'unknown';
+        updateDocCache(docId, { type, name: result.name });
+        setEntries(prev => applyQueryResult(prev, docId, result));
+      })
+    );
+    return () => unsubs.forEach(u => u());
+  }, [docIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadEntries = useCallback(() => {
     const docList = getDocList();
@@ -115,9 +113,8 @@ export function Home({ path }: { path?: string }) {
   const handleCreateCalendar = async () => {
     const name = prompt('Calendar name:', 'Untitled');
     if (name === null) return;
-    await workerReady;
-    const handle = repo.create({ '@type': 'Calendar', name: name || 'Untitled', events: {} });
-    addDocId(handle.documentId);
+    const docId = await createDoc({ '@type': 'Calendar', name: name || 'Untitled', events: {} });
+    addDocId(docId);
     setMessage('Calendar created');
     setError('');
     reloadEntries();
@@ -126,9 +123,8 @@ export function Home({ path }: { path?: string }) {
   const handleCreateTaskList = async () => {
     const name = prompt('Task list name:', 'Untitled');
     if (name === null) return;
-    await workerReady;
-    const handle = repo.create({ '@type': 'TaskList', name: name || 'Untitled', tasks: {} });
-    addDocId(handle.documentId);
+    const docId = await createDoc({ '@type': 'TaskList', name: name || 'Untitled', tasks: {} });
+    addDocId(docId);
     setMessage('Task list created');
     setError('');
     reloadEntries();
@@ -137,12 +133,11 @@ export function Home({ path }: { path?: string }) {
   const handleCreateDataGrid = async () => {
     const name = prompt('Spreadsheet name:', 'Untitled');
     if (name === null) return;
-    await workerReady;
     const sid = () => Math.random().toString(36).slice(2, 10);
     const sheetId = sid();
     const rows: Record<string, { index: number }> = {};
     for (let i = 1; i <= 10; i++) rows[sid()] = { index: i };
-    const handle = repo.create({
+    const docId = await createDoc({
       '@type': 'DataGrid',
       name: name || 'Untitled',
       sheets: {
@@ -156,7 +151,7 @@ export function Home({ path }: { path?: string }) {
         },
       },
     });
-    addDocId(handle.documentId);
+    addDocId(docId);
     setMessage('Spreadsheet created');
     setError('');
     reloadEntries();
@@ -187,7 +182,6 @@ export function Home({ path }: { path?: string }) {
     if (xlsInputRef.current) xlsInputRef.current.value = '';
 
     try {
-      await workerReady;
       const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
@@ -290,11 +284,9 @@ export function Home({ path }: { path?: string }) {
           columns: s.columns, rows: s.rows, cells: s.cells,
         };
       }
-      const handle = repo.create({ '@type': 'DataGrid', name, sheets });
-
-      addDocId(handle.documentId);
-      console.log(`/datagrids/${handle.documentId}`, handle.doc())
-      alert(`/datagrids/${handle.documentId}`)
+      const docId = await createDoc({ '@type': 'DataGrid', name, sheets });
+      addDocId(docId);
+      alert(`/datagrids/${docId}`)
     } catch (err: any) {
       setError('Failed to import: ' + err.message);
     }
@@ -303,11 +295,6 @@ export function Home({ path }: { path?: string }) {
   const handleDelete = async (entry: DocEntry) => {
     const label = entry.type === 'Calendar' ? 'calendar' : entry.type === 'TaskList' ? 'task list' : entry.type === 'DataGrid' ? 'spreadsheet' : 'document';
     if (!confirm(`Delete "${entry.name || 'Untitled'}" ${label}?`)) return;
-    try {
-      await workerReady;
-      const handle = repo.handles[entry.documentId as any];
-      if (handle) repo.delete(entry.documentId as any);
-    } catch { /* ignore — doc may not be loaded in main thread */ }
     removeDocId(entry.documentId);
     setMessage(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`);
     setError('');
@@ -321,15 +308,14 @@ export function Home({ path }: { path?: string }) {
     if (!file) return;
     if (icsInputRef.current) icsInputRef.current.value = '';
     try {
-      await workerReady;
       const text = await file.text();
       const { icsToEvent } = await import('../../shared/ics-parser');
       const parsed = icsToEvent(text);
       const calName = file.name.replace(/\.ics$/i, '') || 'Imported';
       const events: Record<string, any> = {};
       for (const { uid, event } of parsed) events[uid] = event;
-      const handle = repo.create({ '@type': 'Calendar', name: calName, events });
-      addDocId(handle.documentId);
+      const docId = await createDoc({ '@type': 'Calendar', name: calName, events });
+      addDocId(docId);
       setMessage(`Imported ${parsed.length} event${parsed.length !== 1 ? 's' : ''} into "${calName}"`);
       setError('');
       reloadEntries();
@@ -382,7 +368,7 @@ export function Home({ path }: { path?: string }) {
           style={{ backgroundColor: connected ? '#4caf50' : '#f44336' }}
           title={connected ? 'Connected to server' : 'Disconnected from server'}
         />
-        <span className="text-xs text-muted-foreground" title={connected ? `Me: ${repo.peerId}` : 'Disconnected from server'}>{connected ? 'Connected' : 'Disconnected'}</span>
+        <span className="text-xs text-muted-foreground">{connected ? 'Connected' : 'Disconnected'}</span>
         {repoPeers.map(peerId => (
           <span
             key={peerId}

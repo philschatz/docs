@@ -1,18 +1,22 @@
-export type DocSummary = {
-  docId: string;
-  type: string;
-  name: string;
-  count: number;
-  lastModified: string | null;
-  peers: string[];
-};
+import { deepAssign } from '../shared/deep-assign';
+import { syncToTarget } from '../shared/sync-to-target';
 
 export type MainToWorker =
-  | { type: 'init'; wsUrl: string; port: MessagePort }
+  | { type: 'init'; wsUrl: string; port?: MessagePort }
   | { type: 'set-ws-url'; wsUrl: string }
   | { type: 'query'; id: number; docId: string; filter: string }
-  | { type: 'subscribe-home'; docIds: string[] }
-  | { type: 'unsubscribe-home' }
+  // New worker-owned doc API
+  | { type: 'create-doc'; id: number; initialJson: any }
+  | { type: 'update-doc'; id: number; docId: string; fnSource: string; args: Record<string, unknown> }
+  | { type: 'subscribe-query'; subId: number; docId: string; filter: string }
+  | { type: 'unsubscribe-query'; subId: number }
+  | { type: 'set-doc-version'; docId: string; version: number | null }
+  | { type: 'get-doc-history'; id: number; docId: string }
+  | { type: 'restore-doc-to-heads'; id: number; docId: string; heads: string[] }
+  | { type: 'restore-doc-to-version'; id: number; docId: string; version: number }
+  | { type: 'presence-subscribe'; docId: string }
+  | { type: 'presence-unsubscribe'; docId: string }
+  | { type: 'presence-set'; docId: string; state: any }
   // Keyhive operations
   | { type: 'kh-get-identity'; id: number }
   | { type: 'kh-get-contact-card'; id: number }
@@ -35,8 +39,10 @@ export type WorkerToMain =
   | { type: 'error'; message: string }
   | { type: 'peer-connected'; peerCount: number; peers: string[] }
   | { type: 'peer-disconnected'; peerCount: number; peers: string[] }
-  | { type: 'query-result'; id: number; result: any[]; error?: string }
-  | { type: 'doc-summary'; summary: DocSummary }
+  // New worker-owned doc API responses
+  | { type: 'result'; id: number; result?: any; error?: string }
+  | { type: 'sub-result'; subId: number; result: any; heads: string[]; error?: string }
+  | { type: 'presence-update'; docId: string; peers: Record<string, any> }
   // Keyhive responses
   | { type: 'kh-result'; id: number; result?: any; error?: string };
 
@@ -45,8 +51,9 @@ const pendingMessages: MessageEvent[] = [];
 self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
 
 // Dynamic import so the queue handler above is registered BEFORE WASM top-level await runs
-let Repo: any, IndexedDBStorageAdapter: any, MessageChannelNetworkAdapter: any, Automerge: any;
+let Repo: any, IndexedDBStorageAdapter: any, Automerge: any;
 let BrowserWebSocketClientAdapter: any;
+let PresenceClass: any;
 let toDocumentId: (sedimentreeId: any) => string;
 let khBridge: typeof import('../lib/automerge-repo-keyhive/index') | null = null;
 try {
@@ -54,9 +61,9 @@ try {
   const repoModule: any = await import('@automerge/automerge-repo');
   Repo = repoModule.Repo;
   toDocumentId = repoModule.toDocumentId;
+  PresenceClass = repoModule.Presence;
   console.log('[worker] Repo imported');
   ({ IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb'));
-  ({ MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel'));
   ({ BrowserWebSocketClientAdapter } = await import('@automerge/automerge-repo-network-websocket'));
   Automerge = await import('@automerge/automerge');
   console.log('[worker] importing keyhive bridge...');
@@ -106,104 +113,70 @@ let repo: InstanceType<typeof Repo> | null = null;
 let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = null;
 // Maps khDocId (base64) → keyhive Document object (needed for addMember's other_relevant_docs).
 const khDocuments = new Map<string, any>();
-let mcPeerId: string | null = null;
+
+// --- Doc registry for worker-owned subscriptions ---
+
+interface DocEntry {
+  handle: any;
+  pinnedVersion: number | null; // null = live view
+  subscriptions: Map<number, string>; // subId → jq filter
+  presence: any | null; // PresenceClass instance
+}
+const docRegistry = new Map<string, DocEntry>();
+// Maps subId → docId for O(1) unsubscribe lookup
+const subIdToDocId = new Map<number, string>();
+
+async function getOrLoadHandle(docId: string): Promise<any> {
+  const existing = docRegistry.get(docId);
+  if (existing) return existing.handle;
+  if (!repo) throw new Error('Repo not initialized');
+  const handle = await repo.find(docId as any);
+  return handle;
+}
+
+function getOrCreateEntry(docId: string, handle: any): DocEntry {
+  let entry = docRegistry.get(docId);
+  if (!entry) {
+    entry = { handle, pinnedVersion: null, subscriptions: new Map(), presence: null };
+    docRegistry.set(docId, entry);
+  }
+  return entry;
+}
+
+async function runQuery(filter: string, doc: any): Promise<any> {
+  const { compile } = await import('../shared/jq');
+  const fn = compile(filter);
+  return fn(doc);
+}
+
+async function pushToSubscriptions(docId: string) {
+  const entry = docRegistry.get(docId);
+  if (!entry || entry.subscriptions.size === 0) return;
+
+  const handle = entry.handle;
+  let activeDoc: any;
+  if (entry.pinnedVersion !== null) {
+    const history = Automerge.getHistory(handle.doc());
+    activeDoc = history[entry.pinnedVersion]?.snapshot ?? handle.doc();
+  } else {
+    activeDoc = handle.doc();
+  }
+  const heads: string[] = handle.heads ? handle.heads() : [];
+
+  for (const [subId, filter] of entry.subscriptions) {
+    try {
+      const result = await runQuery(filter, activeDoc);
+      (self as any).postMessage({ type: 'sub-result', subId, result, heads } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'sub-result', subId, result: null, heads, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+}
 
 function postStatus() {
-  // Count only non-MessageChannel peers (i.e. WebSocket server connections)
-  const peers = repo ? repo.peers.filter((id: string) => id !== mcPeerId) : [];
+  const peers = repo ? repo.peers : [];
   const peerCount = peers.length;
   (self as any).postMessage({ type: peerCount > 0 ? 'peer-connected' : 'peer-disconnected', peerCount, peers } satisfies WorkerToMain);
-}
-
-// --- Home subscription: push doc summaries on change ---
-
-let homeCleanups: (() => void)[] = [];
-
-function docSummary(docId: string, doc: any, peerIds: string[]): DocSummary {
-  const type = doc?.['@type'] || 'unknown';
-  const name = doc?.name || '';
-  let count = 0;
-  if (type === 'Calendar') {
-    count = doc?.events ? Object.keys(doc.events).length : 0;
-  } else if (type === 'TaskList') {
-    count = doc?.tasks ? Object.keys(doc.tasks).length : 0;
-  } else if (type === 'DataGrid') {
-    if (doc?.sheets) {
-      for (const k of Object.keys(doc.sheets)) {
-        const sheet = doc.sheets[k];
-        if (sheet?.cells) count += Object.keys(sheet.cells).length;
-      }
-    } else if (doc?.cells) {
-      count = Object.keys(doc.cells).length;
-    }
-  }
-  let lastModified: string | null = null;
-  try {
-    const meta = Automerge.getChangesMetaSince(doc, []);
-    let maxTime = 0;
-    for (const m of meta) {
-      if (m.time > maxTime) maxTime = m.time;
-    }
-    if (maxTime > 0) {
-      lastModified = new Date(maxTime * 1000).toISOString();
-    }
-  } catch { /* fall back to null */ }
-  return { docId, type, name, count, lastModified, peers: peerIds };
-}
-
-function cleanupHome() {
-  for (const fn of homeCleanups) fn();
-  homeCleanups = [];
-}
-
-async function setupHomeSubscription(docIds: string[]) {
-  cleanupHome();
-  if (!repo) return;
-
-  const { Presence } = await import('@automerge/automerge-repo');
-
-  for (const docId of docIds) {
-    let handle = repo.handles[docId as any] as any;
-    if (!handle) {
-      try {
-        handle = await Promise.race([
-          repo.find(docId as any),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-        ]);
-      } catch {
-        continue;
-      }
-    }
-    if (!handle?.doc?.()) continue;
-
-    const presence = new Presence({ handle });
-    presence.start({ initialState: { viewing: true }, heartbeatMs: 5000, peerTtlMs: 15000 });
-
-    const getPeerIds = (): string[] => {
-      const states = presence.getPeerStates().value;
-      return Object.entries(states)
-        .filter(([, s]: [string, any]) => s?.value?.viewing)
-        .map(([peerId]) => peerId);
-    };
-
-    const sendSummary = () => {
-      const doc = handle.doc();
-      if (!doc) return;
-      (self as any).postMessage({ type: 'doc-summary', summary: docSummary(docId, doc, getPeerIds()) } satisfies WorkerToMain);
-    };
-
-    sendSummary();
-    const onChange = () => sendSummary();
-    handle.on('change', onChange);
-    presence.on('update', sendSummary);
-    presence.on('goodbye', sendSummary);
-    presence.on('snapshot', sendSummary);
-
-    homeCleanups.push(() => {
-      handle.off('change', onChange);
-      presence.stop();
-    });
-  }
 }
 
 // --- Helper: save keyhive state after mutations ---
@@ -231,7 +204,6 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       console.log('[worker] init message received');
       if (!khBridge) throw new Error('Keyhive bridge not loaded');
 
-      const mcAdapter = new MessageChannelNetworkAdapter(msg.port);
       const storageAdapter = new IndexedDBStorageAdapter();
 
       // Create a base WebSocket adapter (if sync URL is provided)
@@ -252,9 +224,6 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       });
 
       // Create repo with keyhive-signed network + plain storage.
-      // The subduction-tagged automerge-repo requires a subduction instance.
-      // getBlobs() bridges the subduction load path to the IndexedDB storageSubsystem,
-      // so repo.find() can load documents from local storage on the subscribe path.
       const noopSubduction = {
         storage: {},
         removeSedimentree() {},
@@ -288,14 +257,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       ns.on('peer', postStatus);
       ns.on('peer-disconnected', postStatus);
 
-      // Track the MessageChannel peer so postStatus can exclude it
-      ns.on('peer', (p: any) => {
-        const pid = p?.peerId ?? p;
-        console.log('[worker] repo peer connected:', pid);
-        if (!mcPeerId) mcPeerId = pid;
-      });
-      console.log('[worker] adding MessageChannel adapter');
-      repo.networkSubsystem.addNetworkAdapter(mcAdapter);
+      if (msg.port) {
+        const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
+        repo.networkSubsystem.addNetworkAdapter(new MessageChannelNetworkAdapter(msg.port));
+      }
 
       console.log('[worker] init complete, peerId:', khIntegration.peerId);
       (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
@@ -316,12 +281,151 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     repo.networkSubsystem.addNetworkAdapter(newKhAdapter);
   }
 
-  if (msg.type === 'subscribe-home') {
-    await setupHomeSubscription(msg.docIds);
+  // --- New worker-owned doc API ---
+
+  if (msg.type === 'create-doc') {
+    try {
+      if (!repo) throw new Error('Repo not initialized');
+      const handle = repo.create(msg.initialJson);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: { docId: handle.documentId } } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
   }
 
-  if (msg.type === 'unsubscribe-home') {
-    cleanupHome();
+  if (msg.type === 'subscribe-query') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const entry = getOrCreateEntry(msg.docId, handle);
+
+      // Register change listener if first subscriber for this docId
+      if (entry.subscriptions.size === 0) {
+        handle.on('change', () => { pushToSubscriptions(msg.docId); });
+      }
+
+      entry.subscriptions.set(msg.subId, msg.filter);
+      subIdToDocId.set(msg.subId, msg.docId);
+
+      // Push immediately
+      await pushToSubscriptions(msg.docId);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'sub-result', subId: msg.subId, result: null, heads: [], error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'unsubscribe-query') {
+    const docId = subIdToDocId.get(msg.subId);
+    if (docId) {
+      subIdToDocId.delete(msg.subId);
+      const entry = docRegistry.get(docId);
+      if (entry) entry.subscriptions.delete(msg.subId);
+    }
+  }
+
+  if (msg.type === 'set-doc-version') {
+    const entry = docRegistry.get(msg.docId);
+    if (!entry) return;
+    entry.pinnedVersion = msg.version;
+    await pushToSubscriptions(msg.docId);
+  }
+
+  if (msg.type === 'update-doc') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const { args } = msg;
+      const argKeys = Object.keys(args);
+      const argVals = Object.values(args);
+      handle.change((d: any) => {
+        const fn = new Function(...argKeys, 'deepAssign', 'd', `(${msg.fnSource})(d)`);
+        fn(...argVals, deepAssign, d);
+      });
+      (self as any).postMessage({ type: 'result', id: msg.id, result: null } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.error('[worker] update-doc failed:', errMsg(err));
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'get-doc-history') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const doc = handle.doc();
+      if (!doc) throw new Error('Document not ready');
+      const history = Automerge.getHistory(doc);
+      const result = history.map((e: any, i: number) => ({ version: i, time: e.change.time }));
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'restore-doc-to-heads') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const targetDoc = handle.view(msg.heads as any).doc();
+      if (!targetDoc) throw new Error('Could not view document at heads');
+      handle.change((d: any) => syncToTarget(d, targetDoc));
+      // Clear pinned version so subscriptions resume live
+      const entry = docRegistry.get(msg.docId);
+      if (entry) entry.pinnedVersion = null;
+      (self as any).postMessage({ type: 'result', id: msg.id, result: null } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'restore-doc-to-version') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const history = Automerge.getHistory(handle.doc());
+      const snap = history[msg.version]?.snapshot;
+      if (!snap) throw new Error(`Version ${msg.version} not found`);
+      handle.change((d: any) => syncToTarget(d, snap));
+      // Clear pinned version so subscriptions resume live
+      const entry = docRegistry.get(msg.docId);
+      if (entry) entry.pinnedVersion = null;
+      (self as any).postMessage({ type: 'result', id: msg.id, result: null } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'presence-subscribe') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const entry = getOrCreateEntry(msg.docId, handle);
+      if (!entry.presence) {
+        const presence = new PresenceClass({ handle });
+        presence.start({ initialState: { viewing: true, focusedField: null }, heartbeatMs: 5000, peerTtlMs: 15000 });
+        const sendPresence = () => {
+          const peers = { ...presence.getPeerStates().value };
+          (self as any).postMessage({ type: 'presence-update', docId: msg.docId, peers } satisfies WorkerToMain);
+        };
+        presence.on('update', sendPresence);
+        presence.on('goodbye', sendPresence);
+        presence.on('snapshot', sendPresence);
+        entry.presence = presence;
+      }
+    } catch (err: any) {
+      console.warn('[worker] presence-subscribe failed:', errMsg(err));
+    }
+  }
+
+  if (msg.type === 'presence-unsubscribe') {
+    const entry = docRegistry.get(msg.docId);
+    if (entry?.presence) {
+      entry.presence.stop();
+      entry.presence = null;
+    }
+  }
+
+  if (msg.type === 'presence-set') {
+    const entry = docRegistry.get(msg.docId);
+    if (entry?.presence) {
+      for (const [key, value] of Object.entries(msg.state)) {
+        entry.presence.broadcast(key, value);
+      }
+    }
   }
 
   // --- Keyhive operations ---
@@ -575,35 +679,20 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 
   if (msg.type === 'query') {
     try {
-      if (!repo) throw new Error('Repo not initialized');
-      const { compile } = await import('../shared/jq');
-      const handle = repo.handles[msg.docId as any] as any;
-      if (!handle) {
-        const h = repo.find(msg.docId as any);
-        const ready = await Promise.race([
-          h.then((h: any) => h.doc() ? h : null),
-          new Promise(r => setTimeout(() => r(null), 3000)),
-        ]) as any;
-        if (!ready?.doc()) {
-          (self as any).postMessage({ type: 'query-result', id: msg.id, result: [], error: 'Document not found' } satisfies WorkerToMain);
-          return;
-        }
-        const fn = compile(msg.filter);
-        const result = fn(ready.doc());
-        (self as any).postMessage({ type: 'query-result', id: msg.id, result } satisfies WorkerToMain);
-        return;
-      }
+      const handle = await getOrLoadHandle(msg.docId);
       const doc = handle.doc();
+      const heads: string[] = handle.heads ? handle.heads() : [];
       if (!doc) {
-        (self as any).postMessage({ type: 'query-result', id: msg.id, result: [], error: 'Document not ready' } satisfies WorkerToMain);
+        (self as any).postMessage({ type: 'result', id: msg.id, error: 'Document not ready' } satisfies WorkerToMain);
         return;
       }
+      const { compile } = await import('../shared/jq');
       const fn = compile(msg.filter);
       const result = fn(doc);
-      (self as any).postMessage({ type: 'query-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: { result, heads } } satisfies WorkerToMain);
     } catch (err: any) {
       console.error('[worker] query failed for', msg.docId, err);
-      (self as any).postMessage({ type: 'query-result', id: msg.id, result: [], error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 }

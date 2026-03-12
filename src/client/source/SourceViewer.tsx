@@ -199,16 +199,15 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
   const atLatest = useRef(true);
   const historyStale = useRef(false);
   const handleRef = useRef<DocHandle<CalendarDocument> | null>(null);
-  const presenceRef = useRef<Presence<PresenceState, CalendarDocument> | null>(null);
+  const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
   const presenceCleanupRef = useRef<(() => void) | null>(null);
 
-  const { entries: presenceLog, addEntry: addLogEntry, clear: clearLog, attachToPresence } = usePresenceLog();
+  const { entries: presenceLog, addEntry: addLogEntry, clear: clearLog } = usePresenceLog();
 
   const handleFocusPath = useCallback((path: Path | null) => {
-    const p = presenceRef.current;
-    if (!p || !p.running) return;
+    if (!broadcastRef.current) return;
     addLogEntry('sent', 'broadcast', 'self', `focusedField: ${JSON.stringify(path)}`);
-    p.broadcast('focusedField', path);
+    broadcastRef.current('focusedField', path);
   }, [addLogEntry]);
 
   const peerFocusedPaths = useMemo(() => {
@@ -270,16 +269,13 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       setStatus('');
 
       // Presence
-      const { presence, cleanup: presenceCleanup } = initPresence<PresenceState>(
-        handle,
+      const { broadcast, cleanup: presenceCleanup } = initPresence<PresenceState>(
+        docId,
         () => ({ viewing: true, focusedField: null }),
         (states) => { if (mounted) setPeerStates(states); },
       );
-      presenceRef.current = presence;
+      broadcastRef.current = broadcast;
       presenceCleanupRef.current = presenceCleanup;
-
-      // Log presence events
-      attachToPresence(presence, mountedRef);
 
       // Load history in the background — doesn't block initial render
       setTimeout(() => {
@@ -320,7 +316,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       mounted = false;
       mountedRef.current = false;
       presenceCleanupRef.current?.();
-      presenceRef.current = null;
+      broadcastRef.current = null;
       presenceCleanupRef.current = null;
     };
   }, [docId]);
@@ -411,13 +407,12 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
 
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
 
-  const historyAdapter: DocumentHistory<CalendarDocument> = {
+  const historyAdapter: DocumentHistory = {
     active: changeCount > 0,
     editable,
     isLatest,
     version,
     changeCount,
-    snapshot: null,
     time: entry?.change.time ?? null,
     toggleHistory: () => {},
     onSliderChange: (v: number) => {
@@ -427,22 +422,8 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       setVersion(v);
     },
     jumpToLatest,
-    undoToVersion: () => {
-      const handle = handleRef.current;
-      if (!handle || isLatest || !entry) return;
-      const snap = entry.snapshot;
-      if (!snap) return;
-      const plain = JSON.parse(JSON.stringify(snap));
-      handle.change((d: any) => {
-        for (const key of Object.keys(d)) {
-          if (!(key in plain)) delete d[key];
-        }
-        for (const [key, val] of Object.entries(plain)) {
-          (d as any)[key] = val;
-        }
-      });
-      jumpToLatest();
-    },
+    undoToVersion: () => {},
+    onNewHeads: () => {},
   };
 
   return (

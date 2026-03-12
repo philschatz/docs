@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import './tasks.css';
-import { findDocWithProgress } from '../../shared/automerge';
-import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
+import { subscribeQuery, updateDoc } from '../worker-api';
+import type { PeerState } from '../../shared/automerge';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { useDocumentHistory } from '../../shared/useDocumentHistory';
@@ -18,8 +18,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { addDocId } from '@/doc-storage';
 
 interface EditorState {
   uid: string;
@@ -27,6 +25,7 @@ interface EditorState {
   isNew: boolean;
 }
 
+const TASKS_QUERY = '{ tasks: (.tasks // {}), name: (.name // "Tasks"), description: (.description // "") }';
 
 const PATH_PROP_TO_FIELDS: Record<string, string[]> = {
   title: ['ted-title'],
@@ -61,7 +60,7 @@ function sortedTasks(tasks: Record<string, Task>): { uid: string; task: Task }[]
 
 export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
   const [status, setStatus] = useState('Loading task list...');
-  const [loadProgress, setLoadProgress] = useState<number | null>(null);
+  const [doc, setDoc] = useState<any>(null);
   const [listName, setListName] = useState('Tasks');
   const [listDesc, setListDesc] = useState('');
   const [tasks, setTasks] = useState<Record<string, Task>>({});
@@ -69,27 +68,23 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const [quickAddText, setQuickAddText] = useState('');
 
-  const [validationHandle, setValidationHandle] = useState<DocHandle<TaskDocument> | null>(null);
-  const validationErrors = useDocumentValidation(validationHandle);
-  const handleRef = useRef<DocHandle<TaskDocument> | null>(null);
-  const history = useDocumentHistory(handleRef);
+  const history = useDocumentHistory(docId!);
+  const validationErrors = useDocumentValidation(doc);
   const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
   const canEdit = !readOnly && history.editable && accessCanEdit;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
-  const presenceRef = useRef<Presence<PresenceState, TaskDocument> | null>(null);
+  const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
   const presenceCleanupRef = useRef<(() => void) | null>(null);
-  const { entries: presenceLog, clear: clearLog, attachToPresence } = usePresenceLog();
+  const { entries: presenceLog, clear: clearLog } = usePresenceLog();
   const editorStateRef = useRef(editorState);
   editorStateRef.current = editorState;
   const titleFocusedRef = useRef(false);
   const descFocusedRef = useRef(false);
 
   const saveTask = useCallback((uid: string, taskData: Task) => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => {
+    if (!canEditRef.current || !docId) return;
+    updateDoc(docId, (d) => {
       if (!d.tasks[uid]) {
         const clean: any = {};
         for (const key in taskData) {
@@ -99,19 +94,15 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
       } else {
         deepAssign(d.tasks[uid], taskData);
       }
-    });
-    setTasks({ ...(handle.doc()?.tasks || {}) });
+    }, { uid, taskData });
     setEditorState(null);
-  }, []);
+  }, [docId]);
 
   const deleteTask = useCallback((uid: string) => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => { delete d.tasks[uid]; });
-    setTasks({ ...(handle.doc()?.tasks || {}) });
+    if (!canEditRef.current || !docId) return;
+    updateDoc(docId, (d) => { delete d.tasks[uid]; }, { uid });
     setEditorState(null);
-  }, []);
+  }, [docId]);
 
   const openEditor = useCallback((uid: string | null, task: Task | null) => {
     const isNew = !uid;
@@ -132,44 +123,31 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
   }, [quickAddText, saveTask]);
 
   const deleteCompleted = useCallback(() => {
-    if (!canEditRef.current) return;
-    const handle = handleRef.current;
-    if (!handle) return;
-    const doc = handle.doc();
-    if (!doc) return;
-    const uids = Object.entries(doc.tasks)
+    if (!canEditRef.current || !docId) return;
+    const uids = Object.entries(tasks)
       .filter(([, t]) => t.progress === 'completed' || t.progress === 'cancelled')
       .map(([uid]) => uid);
     if (uids.length === 0) return;
-    handle.change((d: any) => {
+    updateDoc(docId, (d) => {
       for (const uid of uids) delete d.tasks[uid];
-    });
-    setTasks({ ...(handle.doc()?.tasks || {}) });
-    if (editorStateRef.current && uids.includes(editorStateRef.current.uid)) {
-      setEditorState(null);
-    }
-  }, []);
+    }, { uids });
+    const es = editorStateRef.current;
+    if (es && uids.includes(es.uid)) setEditorState(null);
+  }, [docId, tasks]);
 
   const toggleComplete = useCallback((uid: string, task: Task) => {
-    if (!canEditRef.current) return;
+    if (!canEditRef.current || !docId) return;
     const newProgress = task.progress === 'completed' ? 'needs-action' : 'completed';
-    const handle = handleRef.current;
-    if (!handle) return;
-    handle.change((d: any) => { d.tasks[uid].progress = newProgress; });
-    setTasks({ ...(handle.doc()?.tasks || {}) });
+    updateDoc(docId, (d) => { d.tasks[uid].progress = newProgress; }, { uid, newProgress });
+  }, [docId]);
+
+  const handleFieldFocus = useCallback((path: (string | number)[] | null) => {
+    broadcastRef.current?.('focusedField', path);
   }, []);
 
   useEffect(() => {
-    const p = presenceRef.current;
-    if (!p || !p.running) return;
-    if (!editorState) p.broadcast('focusedField', null);
+    if (!editorState) broadcastRef.current?.('focusedField', null);
   }, [editorState]);
-
-  const handleFieldFocus = useCallback((path: (string | number)[] | null) => {
-    const p = presenceRef.current;
-    if (!p || !p.running) return;
-    p.broadcast('focusedField', path);
-  }, []);
 
   const peerFocusedFields = useMemo(() => {
     const result: Record<string, { color: string; peerId: string }> = {};
@@ -196,87 +174,52 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
 
     let mounted = true;
 
-    (async () => {
-      setLoadProgress(0);
-      const handle = await findDocWithProgress<TaskDocument>(docId, setLoadProgress);
-      const doc = handle.doc();
-      if (!mounted) return;
-      if (!doc) { setStatus('Document not found. Check the URL.'); return; }
+    const { broadcast, cleanup: presenceCleanup } = initPresence<PresenceState>(
+      docId,
+      () => ({ viewing: true, focusedField: null }),
+      (states) => { if (mounted) setPeerStates(states); },
+    );
+    broadcastRef.current = broadcast;
+    presenceCleanupRef.current = presenceCleanup;
 
-      addDocId(docId, { type: 'TaskList', name: doc.name });
-      handleRef.current = handle;
-      setValidationHandle(handle);
-      setTasks({ ...(doc.tasks || {}) });
-      if (doc.name) setListName(doc.name);
-      if (doc.description) setListDesc(doc.description);
-      document.title = (doc.name || 'Tasks') + ' - Tasks';
+    const unsubscribe = subscribeQuery(docId, TASKS_QUERY, (result, heads) => {
+      if (!mounted) return;
+      if (!result) return;
+      setDoc(result);
+      setTasks(result.tasks || {});
+      if (result.name && !titleFocusedRef.current) {
+        setListName(result.name);
+        document.title = result.name + ' - Tasks';
+      }
+      if (!descFocusedRef.current) setListDesc(result.description || '');
       setStatus('');
 
-      const { presence, cleanup: presenceCleanup } = initPresence<PresenceState>(
-        handle,
-        () => ({ viewing: true, focusedField: null }),
-        (states) => { if (mounted) setPeerStates(states); },
-      );
-      presenceRef.current = presence;
-      presenceCleanupRef.current = presenceCleanup;
-      attachToPresence(presence, { current: mounted });
+      // Update history tracking
+      history.onNewHeads(heads);
 
-      handle.on('change', () => {
-        const d = handle.doc();
-        if (!d) return;
-        setTasks({ ...(d.tasks || {}) });
-        if (d.name && !titleFocusedRef.current) {
-          setListName(d.name);
-          document.title = d.name + ' - Tasks';
+      // Update open editor if task data changed
+      const es = editorStateRef.current;
+      if (es && !es.isNew) {
+        const fresh = (result.tasks || {})[es.uid];
+        if (fresh) {
+          setEditorState(prev => {
+            if (!prev || prev.uid !== es.uid) return prev;
+            return { ...prev, task: fresh };
+          });
+        } else {
+          setEditorState(null);
         }
-        if (!descFocusedRef.current) setListDesc(d.description || '');
-
-        const es = editorStateRef.current;
-        if (es && !es.isNew) {
-          const fresh = d.tasks[es.uid];
-          if (fresh) {
-            setEditorState(prev => {
-              if (!prev || prev.uid !== es.uid) return prev;
-              return { ...prev, task: fresh };
-            });
-          } else {
-            setEditorState(null);
-          }
-        }
-      });
-    })().catch((err) => {
-      if (!mounted) return;
-      const msg = err?.message || 'Failed to load document';
-      setStatus(msg);
-      setLoadProgress(null);
+      }
     });
 
     return () => {
       mounted = false;
-      setValidationHandle(null);
       presenceCleanupRef.current?.();
-      presenceRef.current = null;
+      broadcastRef.current = null;
       presenceCleanupRef.current = null;
+      unsubscribe();
     };
   }, [docId]);
-
-  // Swap tasks when browsing history
-  useEffect(() => {
-    if (!history.active) return;
-    if (history.snapshot) {
-      setTasks({ ...(history.snapshot.tasks || {}) });
-    } else {
-      setTasks({ ...(handleRef.current?.doc()?.tasks || {}) });
-    }
-    if (!canEdit) setEditorState(null);
-  }, [history.snapshot, history.active, canEdit]);
-
-  // Restore live tasks when exiting history mode
-  useEffect(() => {
-    if (history.active) return;
-    const doc = handleRef.current?.doc();
-    if (doc) setTasks({ ...(doc.tasks || {}) });
-  }, [history.active]);
 
   const peerList = Object.values(peerStates).filter(p => p.value.viewing);
   const peerEditingTasks = useMemo(() => {
@@ -301,13 +244,11 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onTitleChange={setListName}
         onTitleBlur={(value) => {
           titleFocusedRef.current = false;
+          if (!docId || !canEdit) return;
           const name = value.trim() || 'Tasks';
           setListName(name);
-          const handle = handleRef.current;
-          if (handle) {
-            handle.change((d: any) => { d.name = name; });
-            document.title = name + ' - Tasks';
-          }
+          updateDoc(docId, (d) => { d.name = name; }, { name });
+          document.title = name + ' - Tasks';
         }}
         docId={docId}
         peers={peerList}
@@ -327,19 +268,14 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onInput={(e: any) => setListDesc(e.currentTarget.value)}
         onBlur={(e: any) => {
           descFocusedRef.current = false;
+          if (!docId || !canEdit) return;
           const desc = e.currentTarget.value.trim();
           setListDesc(desc);
-          const handle = handleRef.current;
-          if (handle) {
-            handle.change((d: any) => { d.description = desc || undefined; });
-          }
+          updateDoc(docId, (d) => { d.description = desc || undefined; }, { desc });
         }}
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
-      {loadProgress !== null && (
-        <Progress className="my-1" value={loadProgress} />
-      )}
       {status && <p className="text-sm text-muted-foreground my-1">{status}</p>}
 
       <div className="flex items-center gap-2 mb-3">

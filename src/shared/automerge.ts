@@ -29,6 +29,14 @@ export function getWsUrl(): string {
 
 // --- Worker setup ---
 
+/** Extra message handlers registered at import time by worker-api.ts and other modules. */
+const extraMessageHandlers: Array<(msg: any) => boolean> = [];
+
+/** Register a handler that is called for every worker message. Return true if handled. */
+export function registerWorkerMessageHandler(fn: (msg: any) => boolean): void {
+  extraMessageHandlers.push(fn);
+}
+
 const worker = new Worker(
   new URL('../client/automerge-worker.ts', import.meta.url),
   { type: 'module' },
@@ -73,12 +81,16 @@ export function setSyncEnabled(enabled: boolean) {
   worker.postMessage({ type: 'set-ws-url', wsUrl: enabled ? defaultWsUrl() : '' });
 }
 
-// --- Repo network ready promise (resolves when main-thread repo connects to worker peer) ---
+// --- Repo network ready promise ---
+// Resolves either when the worker sends 'ready' OR when the MessageChannel peer connects.
 
 let resolveRepoReady: () => void;
 export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
 const ns = repo.networkSubsystem;
 ns.on('peer', (p: any) => { console.log('[automerge] workerReady: peer event, peerId=', p?.peerId ?? p); resolveRepoReady(); });
+
+/** Access the underlying worker instance (used by worker-api.ts). */
+export function _worker(): Worker { return worker; }
 
 // Keyhive-specific ready promise — resolves when WASM + keyhive are fully initialized
 let resolveKeyhiveReady: () => void;
@@ -170,43 +182,6 @@ export async function findDocWithProgress<T>(
   return handle;
 }
 
-// --- Worker query API ---
-
-let queryIdCounter = 0;
-const pendingQueries = new Map<number, { resolve: (result: any[]) => void; reject: (err: Error) => void }>();
-
-/**
- * Run a jq filter against a document in the worker without loading it into main-thread memory.
- */
-export async function queryDoc(docId: string, filter: string): Promise<any[]> {
-  await workerReady;
-  const id = ++queryIdCounter;
-  return new Promise((resolve, reject) => {
-    pendingQueries.set(id, { resolve, reject });
-    worker.postMessage({ type: 'query', id, docId, filter });
-  });
-}
-
-// --- Home doc summary subscription ---
-
-import type { DocSummary } from '../client/automerge-worker';
-export type { DocSummary };
-
-type HomeSummaryCallback = (summary: DocSummary) => void;
-let homeSummaryCallback: HomeSummaryCallback | null = null;
-
-export function subscribeHome(
-  docIds: string[],
-  callback: HomeSummaryCallback,
-): () => void {
-  homeSummaryCallback = callback;
-  worker.postMessage({ type: 'subscribe-home', docIds });
-  return () => {
-    homeSummaryCallback = null;
-    worker.postMessage({ type: 'unsubscribe-home' });
-  };
-}
-
 // --- Connection status (listens to worker messages) ---
 
 type ConnectionListener = (connected: boolean) => void;
@@ -220,7 +195,9 @@ const peerListListeners = new Set<PeerListListener>();
 worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
   const msg = e.data;
   if (msg.type === 'ready') {
-    // Worker initialized — peer event on repo.networkSubsystem resolves workerReady
+    // Resolve workerReady now — this will also be resolved by the MessageChannel peer event,
+    // but resolving twice is a no-op. Resolving here ensures it works after MessageChannel removal.
+    resolveRepoReady();
   } else if (msg.type === 'kh-ready') {
     // Register all known automerge→keyhive doc mappings so the docMap is populated
     // before any sync messages arrive (EditorTitleBar also registers on mount, but
@@ -241,14 +218,10 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
     for (const fn of peerListListeners) fn(workerPeers);
   } else if (msg.type === 'kh-result') {
     handleKeyhiveResponse(msg);
-  } else if (msg.type === 'doc-summary') {
-    if (homeSummaryCallback) homeSummaryCallback(msg.summary);
-  } else if (msg.type === 'query-result') {
-    const pending = pendingQueries.get(msg.id);
-    if (pending) {
-      pendingQueries.delete(msg.id);
-      if (msg.error) pending.reject(new Error(msg.error));
-      else pending.resolve(msg.result);
+  } else {
+    // Route to registered handlers (worker-api.ts etc.)
+    for (const handler of extraMessageHandlers) {
+      if (handler(msg)) break;
     }
   }
 };

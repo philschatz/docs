@@ -11,7 +11,7 @@ function formatTime(ts: number): string {
     d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function HistorySlider<T>({ history, dismissable = true }: { history: DocumentHistory<T>; dismissable?: boolean }) {
+export function HistorySlider({ history, dismissable = true }: { history: DocumentHistory; dismissable?: boolean }) {
   const sliderRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (history.active) sliderRef.current?.focus();
