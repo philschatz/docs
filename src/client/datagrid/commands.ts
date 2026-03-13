@@ -85,6 +85,8 @@ export interface GridCommandContext {
   setSelectedCols: (cols: Set<number>) => void;
   undo: () => void;
   redo: () => void;
+  /** Native paste event clipboard data (set by paste event listener). */
+  pasteEvent?: ClipboardEvent;
   /** Sheet tab that was right-clicked (for sheet context menu). */
   targetSheetId?: string;
   onDeleteSheet?: (id: string) => void;
@@ -171,6 +173,8 @@ export interface GridCommandsApi {
   sheetCtx: ResolvedEntry[];
   /** Call from handleKeyDown after navigation keys. Returns true if the event was handled. */
   dispatchKey(e: KeyboardEvent, isMod: boolean): boolean;
+  /** Execute the paste command with optional native ClipboardEvent data. */
+  executePaste(pasteEvent?: ClipboardEvent): void;
 }
 
 // ============================================================
@@ -366,27 +370,8 @@ const clipboardPlugin: GridPlugin = {
           setSelectionAnchor([destCol, destRow]);
           setSelectedCell([pasteMaxCol, pasteMaxRow]);
         } else {
-          // External paste: read fresh row/col IDs inside mutate so they're in sync
-          (async () => {
-            let rows: string[][] | null = null;
-            try {
-              const items = await navigator.clipboard.read();
-              for (const item of items) {
-                if (!rows && item.types.includes('text/html')) {
-                  rows = parseHtmlClipboard(await (await item.getType('text/html')).text());
-                }
-                if (!rows && item.types.includes('text/plain')) {
-                  const text = await (await item.getType('text/plain')).text();
-                  if (text) rows = text.split('\n').map(l => l.split('\t'));
-                }
-              }
-            } catch {
-              try {
-                const text = await navigator.clipboard.readText();
-                if (text) rows = text.split('\n').map(l => l.split('\t'));
-              } catch { /* denied */ }
-            }
-            if (!rows?.length) return;
+          // External paste: try native paste event data first, then async Clipboard API
+          const doPaste = (rows: string[][]) => {
 
             const finalRows = rows;
             // Pre-compute everything outside mutate using ctx.doc snapshot
@@ -440,6 +425,42 @@ const clipboardPlugin: GridPlugin = {
             const pasteMaxCol = destCol + (rows[0]?.length || 1) - 1;
             setSelectionAnchor([destCol, destRow]);
             setSelectedCell([pasteMaxCol, pasteMaxRow]);
+          };
+
+          // Try native paste event data first (synchronous, no permissions needed)
+          const pe = ctx.pasteEvent;
+          if (pe?.clipboardData) {
+            let rows: string[][] | null = null;
+            const html = pe.clipboardData.getData('text/html');
+            if (html) rows = parseHtmlClipboard(html);
+            if (!rows) {
+              const text = pe.clipboardData.getData('text/plain');
+              if (text) rows = text.split('\n').map(l => l.split('\t'));
+            }
+            if (rows?.length) { doPaste(rows); return; }
+          }
+
+          // Fallback: async Clipboard API
+          (async () => {
+            let rows: string[][] | null = null;
+            try {
+              const items = await navigator.clipboard.read();
+              for (const item of items) {
+                if (!rows && item.types.includes('text/html')) {
+                  rows = parseHtmlClipboard(await (await item.getType('text/html')).text());
+                }
+                if (!rows && item.types.includes('text/plain')) {
+                  const text = await (await item.getType('text/plain')).text();
+                  if (text) rows = text.split('\n').map(l => l.split('\t'));
+                }
+              }
+            } catch {
+              try {
+                const text = await navigator.clipboard.readText();
+                if (text) rows = text.split('\n').map(l => l.split('\t'));
+              } catch { /* denied */ }
+            }
+            if (rows?.length) doPaste(rows);
           })();
         }
       },
@@ -1153,6 +1174,8 @@ export function useGridCommands(
 
   function dispatchKey(e: KeyboardEvent, isMod: boolean): boolean {
     for (const cmd of KEY_COMMANDS) {
+      // Skip paste — handled by the native paste event listener so we get clipboardData
+      if (cmd.id === 'paste') continue;
       for (const shortcut of cmd.shortcuts!) {
         if (matchShortcut(e, isMod, shortcut)) {
           e.preventDefault();
@@ -1164,5 +1187,13 @@ export function useGridCommands(
     return false;
   }
 
-  return { toolbar, menus, cellCtx, rowCtx, colCtx, sheetCtx, dispatchKey };
+  function executePaste(pasteEvent?: ClipboardEvent): void {
+    const pasteCmd = COMMAND_REGISTRY.get('paste');
+    if (!pasteCmd) return;
+    ctx.pasteEvent = pasteEvent;
+    pasteCmd.execute(state, ctx);
+    ctx.pasteEvent = undefined;
+  }
+
+  return { toolbar, menus, cellCtx, rowCtx, colCtx, sheetCtx, dispatchKey, executePaste };
 }

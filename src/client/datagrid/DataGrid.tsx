@@ -89,6 +89,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const autofillDragRef = useRef<{ sourceRange: { minCol: number; maxCol: number; minRow: number; maxRow: number } } | null>(null);
   const dispatchKeyRef = useRef<((e: KeyboardEvent, isMod: boolean) => boolean) | null>(null);
   const commandCtxRef = useRef<GridCommandContext | null>(null);
+  const executePasteRef = useRef<((e?: ClipboardEvent) => void) | null>(null);
   const sheetRenameRef = useRef<((id: string) => void) | null>(null);
   const [autofillTarget, setAutofillTarget] = useState<{ minCol: number; maxCol: number; minRow: number; maxRow: number } | null>(null);
   const [clipboardSource, setClipboardSource] = useState<{ minRow: number; maxRow: number; minCol: number; maxCol: number } | null>(null);
@@ -1028,6 +1029,21 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   commandCtxRef.current = commandCtx;
   const commands = useGridCommands(commandState, commandCtx);
   dispatchKeyRef.current = commands.dispatchKey;
+  executePasteRef.current = commands.executePaste;
+
+  // Native paste event listener — provides synchronous clipboard data that
+  // the async Clipboard API often fails to deliver (permissions, focus loss).
+  useEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const handlePaste = (e: Event) => {
+      const ce = e as ClipboardEvent;
+      ce.preventDefault();
+      executePasteRef.current?.(ce);
+    };
+    el.addEventListener('paste', handlePaste);
+    return () => el.removeEventListener('paste', handlePaste);
+  }, []);
 
   return (
     <DocLoader docId={docId}>

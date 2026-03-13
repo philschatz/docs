@@ -814,4 +814,49 @@ describe('paste with formulas', () => {
     expect(result['r1:c1']).toBe('200');
   });
 
+  it('cross-document paste: formulas from doc A paste correctly into doc B with different IDs', () => {
+    // Simulate copying from document A (row/col IDs: rA0..rA4, cA0..cA4)
+    const docARowIds = ['rA0', 'rA1', 'rA2', 'rA3', 'rA4'];
+    const docAColIds = ['cA0', 'cA1', 'cA2', 'cA3', 'cA4'];
+    // Cell (1,1) in doc A has formula =A1+B1 (referencing row 0, cols 0 and 1)
+    const internalA = a1ToInternal('=A1+B1', 1, 1, docARowIds, docAColIds);
+    // Copy converts to R1C1
+    const r1c1 = internalToR1C1(internalA, 1, 1, docARowIds, docAColIds);
+    // R[-1]C means R[-1]C[0] — bare C = current column (offset 0)
+    expect(r1c1).toBe('=R[-1]C[-1]+R[-1]C');
+
+    // Paste into document B (different row/col IDs) at position (2,2)
+    const docBRowIds = ['rB0', 'rB1', 'rB2', 'rB3', 'rB4'];
+    const docBColIds = ['cB0', 'cB1', 'cB2', 'cB3', 'cB4'];
+    const result = simulatePaste([[r1c1]], 2, 2, docBRowIds, docBColIds);
+    const stored = result['rB2:cB2'];
+    expect(stored).toMatch(/^=/);
+
+    // Should reference (1,1) in doc B — one row up and one col left from (2,2)
+    const a1 = internalToA1(stored, 2, 2, docBRowIds, docBColIds);
+    expect(a1).toBe('=B2+C2');
+  });
+
+  it('cross-document paste via TSV: R1C1 formulas adapt to new document', () => {
+    // Simulate TSV clipboard from doc A containing a plain value and a formula
+    // Cell (0,0) = "10", Cell (0,1) = "=A1*2" → in R1C1: "=RC[-1]*2"
+    const docARowIds = ['rA0', 'rA1', 'rA2'];
+    const docAColIds = ['cA0', 'cA1', 'cA2'];
+    const internalFormula = a1ToInternal('=A1*2', 0, 1, docARowIds, docAColIds);
+    const r1c1 = internalToR1C1(internalFormula, 0, 1, docARowIds, docAColIds);
+    const tsv = `10\t${r1c1}`;
+
+    // Simulate plain text fallback
+    const rows = tsv.split('\n').map(l => l.split('\t'));
+
+    // Paste into document B at (1, 0)
+    const docBRowIds = ['rB0', 'rB1', 'rB2'];
+    const docBColIds = ['cB0', 'cB1', 'cB2'];
+    const result = simulatePaste(rows, 1, 0, docBRowIds, docBColIds);
+
+    expect(result['rB1:cB0']).toBe('10');
+    const a1 = internalToA1(result['rB1:cB1'], 1, 1, docBRowIds, docBColIds);
+    expect(a1).toBe('=A2*2');
+  });
+
 });
