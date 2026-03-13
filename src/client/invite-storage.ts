@@ -35,3 +35,11 @@ export function addInviteRecord(record: InviteRecord): void {
 export function removeInviteRecord(id: string): void {
   saveAll(loadAll().filter(r => r.id !== id));
 }
+
+export function getAllInviteRecords(): InviteRecord[] {
+  return loadAll();
+}
+
+export function removeInviteRecordsForDoc(khDocId: string): void {
+  saveAll(loadAll().filter(r => r.khDocId !== khDocId));
+}

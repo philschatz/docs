@@ -9,7 +9,8 @@ import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
-import { getDocList, addDocId, removeDocId, updateDocCache } from '@/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
+import { getAllInviteRecords, removeInviteRecord, removeInviteRecordsForDoc } from '@/invite-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
 
@@ -90,6 +91,15 @@ export function Home({ path }: { path?: string }) {
     return () => unsubs.forEach(u => u());
   }, [docIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Clean up invite records for documents no longer stored locally
+  useEffect(() => {
+    const docList = getDocList();
+    const knownKhDocIds = new Set(docList.map(d => d.khDocId).filter(Boolean));
+    for (const r of getAllInviteRecords()) {
+      if (!knownKhDocIds.has(r.khDocId)) removeInviteRecord(r.id);
+    }
+  }, []);
+
   const reloadEntries = useCallback(() => {
     const docList = getDocList();
     if (docList.length === 0) return;
@@ -116,9 +126,7 @@ export function Home({ path }: { path?: string }) {
     const resolvedName = name || 'Untitled';
     const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: resolvedName, events: {} });
     addDocId(docId, { type: 'Calendar', name: resolvedName, khDocId });
-    setMessage('Calendar created');
-    setError('');
-    reloadEntries();
+    window.location.hash = viewPathForType('Calendar', docId);
   };
 
   const handleCreateTaskList = async () => {
@@ -127,9 +135,7 @@ export function Home({ path }: { path?: string }) {
     const resolvedName = name || 'Untitled';
     const { docId, khDocId } = await createDoc({ '@type': 'TaskList', name: resolvedName, tasks: {} });
     addDocId(docId, { type: 'TaskList', name: resolvedName, khDocId });
-    setMessage('Task list created');
-    setError('');
-    reloadEntries();
+    window.location.hash = viewPathForType('TaskList', docId);
   };
 
   const handleCreateDataGrid = async () => {
@@ -155,9 +161,7 @@ export function Home({ path }: { path?: string }) {
       },
     });
     addDocId(docId, { type: 'DataGrid', name: resolvedName, khDocId });
-    setMessage('Spreadsheet created');
-    setError('');
-    reloadEntries();
+    window.location.hash = viewPathForType('DataGrid', docId);
   };
 
   const xlsInputRef = useRef<HTMLInputElement>(null);
@@ -298,6 +302,8 @@ export function Home({ path }: { path?: string }) {
   const handleDelete = async (entry: DocEntry) => {
     const label = entry.type === 'Calendar' ? 'calendar' : entry.type === 'TaskList' ? 'task list' : entry.type === 'DataGrid' ? 'spreadsheet' : 'document';
     if (!confirm(`Delete "${entry.name || 'Untitled'}" ${label}?`)) return;
+    const storedEntry = getDocEntry(entry.documentId);
+    if (storedEntry?.khDocId) removeInviteRecordsForDoc(storedEntry.khDocId);
     removeDocId(entry.documentId);
     setMessage(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`);
     setError('');

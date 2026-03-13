@@ -23,6 +23,7 @@ import {
   removeInviteRecord,
   type InviteRecord,
 } from '../invite-storage';
+import { encodeInvitePayload } from '../invite/invite-codec';
 
 interface AccessControlProps {
   /** Keyhive document ID (base64-encoded). */
@@ -127,20 +128,10 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
       if (result.groupId && result.groupId !== sharingGroupId) {
         onGroupIdChange?.(result.groupId);
       }
-      // Encode invite payload: 32-byte seed + archive bytes as a single base64url blob
+      // Encode invite payload (compressed)
       const seed = new Uint8Array(result.inviteKeyBytes);
       const archive = new Uint8Array(result.archiveBytes);
-      // Format: [4-byte seed length (big-endian)] [seed] [archive]
-      const payload = new Uint8Array(4 + seed.length + archive.length);
-      const view = new DataView(payload.buffer);
-      view.setUint32(0, seed.length);
-      payload.set(seed, 4);
-      payload.set(archive, 4 + seed.length);
-      let binary = '';
-      for (let i = 0; i < payload.length; i++) binary += String.fromCharCode(payload[i]);
-      const payloadB64 = btoa(binary)
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      console.log('[AccessControl] invite encode: archiveLen=', archive.length, 'payloadLen=', payload.length, 'b64Len=', payloadB64.length);
+      const payloadB64 = await encodeInvitePayload(seed, archive);
       const base = window.location.origin + window.location.pathname;
       const inviteUrl = `${base}#/invite/${docId}/${docType ?? 'unknown'}/${payloadB64}`;
 

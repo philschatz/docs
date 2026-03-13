@@ -17,6 +17,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
 import { addDocId, getDocEntry } from '@/doc-storage';
 import { claimInvite } from '../../shared/keyhive-api';
+import { decodeInvitePayload } from './invite-codec';
 
 interface InvitePageProps {
   docId?: string;
@@ -25,19 +26,6 @@ interface InvitePageProps {
   path?: string;
 }
 
-function decodePayload(b64url: string): { seed: Uint8Array; archive: Uint8Array } {
-  console.log('[InvitePage] decodePayload: b64url.length=', b64url.length);
-  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const view = new DataView(bytes.buffer);
-  const seedLen = view.getUint32(0);
-  const seed = bytes.slice(4, 4 + seedLen);
-  const archive = bytes.slice(4 + seedLen);
-  console.log('[InvitePage] decodePayload: totalBytes=', bytes.length, 'seedLen=', seedLen, 'archiveLen=', archive.length);
-  return { seed, archive };
-}
 
 function docRoute(docId: string, type?: string): string {
   switch (type) {
@@ -64,7 +52,7 @@ export function InvitePage({ docId, docType, inviteKey }: InvitePageProps) {
     (async () => {
       try {
         setStatus('Decoding invite...');
-        const { seed, archive } = decodePayload(inviteKey);
+        const { seed, archive } = await decodeInvitePayload(inviteKey);
 
         setStatus('Claiming access...');
         const result = await claimInvite(Array.from(seed), Array.from(archive), docId);
