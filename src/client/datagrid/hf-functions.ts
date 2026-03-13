@@ -245,6 +245,8 @@ function uniqueColumns(range: SimpleRangeValue, exactlyOnce: boolean): SimpleRan
 // Distribution functions — NORMAL, UNIFORM, TRIANGULAR, PERT, LOGNORMAL
 // During normal HF evaluation they return analytical mean and register in
 // the distribution registry.  The MC engine reads the registry to sample.
+//
+// Source: https://docs.getguesstimate.com/docs/functions/distributions
 // ---------------------------------------------------------------------------
 
 class DistributionPlugin extends FunctionPlugin {
@@ -283,6 +285,59 @@ class DistributionPlugin extends FunctionPlugin {
       method: 'lognormal',
       parameters: [
         { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'BETA': {
+      method: 'betaDist',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'EXPONENTIAL': {
+      method: 'exponentialDist',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'GAMMA': {
+      method: 'gammaDist',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'CAUCHY': {
+      method: 'cauchy',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'WEIBULL': {
+      method: 'weibull',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'BERNOULLI': {
+      method: 'bernoulli',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'BINOMIAL': {
+      method: 'binomial',
+      parameters: [
+        { argumentType: FunctionArgumentType.NUMBER },
+        { argumentType: FunctionArgumentType.NUMBER },
+      ],
+    },
+    'POISSON': {
+      method: 'poisson',
+      parameters: [
         { argumentType: FunctionArgumentType.NUMBER },
       ],
     },
@@ -334,6 +389,70 @@ class DistributionPlugin extends FunctionPlugin {
       return distributionMean(info);
     });
   }
+
+  betaDist(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('BETA'), (alpha: number, beta: number) => {
+      const info: DistributionInfo = { type: 'beta', params: [alpha, beta] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  exponentialDist(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('EXPONENTIAL'), (lambda: number) => {
+      const info: DistributionInfo = { type: 'exponential', params: [lambda] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  gammaDist(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('GAMMA'), (k: number, theta: number) => {
+      const info: DistributionInfo = { type: 'gamma', params: [k, theta] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  cauchy(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('CAUCHY'), (x0: number, g: number) => {
+      const info: DistributionInfo = { type: 'cauchy', params: [x0, g] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  weibull(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('WEIBULL'), (lambda: number, k: number) => {
+      const info: DistributionInfo = { type: 'weibull', params: [lambda, k] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  bernoulli(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('BERNOULLI'), (p: number) => {
+      const info: DistributionInfo = { type: 'bernoulli', params: [p] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  binomial(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('BINOMIAL'), (n: number, p: number) => {
+      const info: DistributionInfo = { type: 'binomial', params: [n, p] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
+
+  poisson(ast: any, state: any) {
+    return this.runFunction(ast.args, state, this.metadata('POISSON'), (lambda: number) => {
+      const info: DistributionInfo = { type: 'poisson', params: [lambda] };
+      this.register(ast, state, info);
+      return distributionMean(info);
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +468,10 @@ export function registerCustomFunctions() {
   HyperFormula.registerFunctionPlugin(SortPlugin, { enGB: { SORT: 'SORT' } });
   HyperFormula.registerFunctionPlugin(UniquePlugin, { enGB: { UNIQUE: 'UNIQUE' } });
   HyperFormula.registerFunctionPlugin(DistributionPlugin, {
-    enGB: { NORMAL: 'NORMAL', UNIFORM: 'UNIFORM', TRIANGULAR: 'TRIANGULAR', PERT: 'PERT', LOGNORMAL: 'LOGNORMAL' },
+    enGB: {
+      NORMAL: 'NORMAL', UNIFORM: 'UNIFORM', TRIANGULAR: 'TRIANGULAR', PERT: 'PERT', LOGNORMAL: 'LOGNORMAL',
+      BETA: 'BETA', EXPONENTIAL: 'EXPONENTIAL', GAMMA: 'GAMMA', CAUCHY: 'CAUCHY', WEIBULL: 'WEIBULL',
+      BERNOULLI: 'BERNOULLI', BINOMIAL: 'BINOMIAL', POISSON: 'POISSON',
+    },
   });
 }

@@ -225,7 +225,8 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const syncHyperFormula = useCallback(() => {
     const d = docRef.current;
     const hf = hfRef.current;
-    if (!d?.sheets || !hf) return;
+    if (!d?.sheets) return;
+    if (!hf) { rebuildHyperFormula(); setSyncing(false); return; }
     const order = sortedEntries(d.sheets);
     // If sheet count changed, do a full rebuild
     if (hf.countSheets() !== order.length) {

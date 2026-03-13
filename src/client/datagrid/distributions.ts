@@ -2,7 +2,10 @@
  * Probabilistic distribution types, sampling algorithms, and statistics.
  */
 
-export type DistributionType = 'normal' | 'uniform' | 'triangular' | 'pert' | 'lognormal';
+export type DistributionType =
+  | 'normal' | 'uniform' | 'triangular' | 'pert' | 'lognormal'
+  | 'beta' | 'exponential' | 'gamma' | 'cauchy' | 'weibull'
+  | 'bernoulli' | 'binomial' | 'poisson';
 
 export interface DistributionInfo {
   type: DistributionType;
@@ -34,6 +37,14 @@ export function sampleDistribution(info: DistributionInfo): number {
     case 'triangular': return sampleTriangular(info.params[0], info.params[1], info.params[2]);
     case 'pert': return samplePert(info.params[0], info.params[1], info.params[2]);
     case 'lognormal': return sampleLognormal(info.params[0], info.params[1]);
+    case 'beta': return sampleBeta(info.params[0], info.params[1]);
+    case 'exponential': return sampleExponential(info.params[0]);
+    case 'gamma': return sampleGamma(info.params[0]) * info.params[1];
+    case 'cauchy': return sampleCauchy(info.params[0], info.params[1]);
+    case 'weibull': return sampleWeibull(info.params[0], info.params[1]);
+    case 'bernoulli': return Math.random() < info.params[0] ? 1 : 0;
+    case 'binomial': return sampleBinomial(info.params[0], info.params[1]);
+    case 'poisson': return samplePoisson(info.params[0]);
   }
 }
 
@@ -51,6 +62,17 @@ export function distributionMean(info: DistributionInfo): number {
       const [mu, sigma] = info.params;
       return Math.exp(mu + sigma * sigma / 2);
     }
+    case 'beta': return info.params[0] / (info.params[0] + info.params[1]);
+    case 'exponential': return 1 / info.params[0];
+    case 'gamma': return info.params[0] * info.params[1];
+    case 'cauchy': return info.params[0]; // median (mean is undefined)
+    case 'weibull': {
+      const [lambda, k] = info.params;
+      return lambda * gamma(1 + 1 / k);
+    }
+    case 'bernoulli': return info.params[0];
+    case 'binomial': return info.params[0] * info.params[1];
+    case 'poisson': return info.params[0];
   }
 }
 
@@ -114,6 +136,57 @@ function sampleBeta(alpha: number, beta: number): number {
   const x = sampleGamma(alpha);
   const y = sampleGamma(beta);
   return x / (x + y);
+}
+
+function sampleExponential(lambda: number): number {
+  let u = 0;
+  while (u === 0) u = Math.random();
+  return -Math.log(u) / lambda;
+}
+
+function sampleCauchy(x0: number, gamma: number): number {
+  return x0 + gamma * Math.tan(Math.PI * (Math.random() - 0.5));
+}
+
+function sampleWeibull(lambda: number, k: number): number {
+  let u = 0;
+  while (u === 0) u = Math.random();
+  return lambda * Math.pow(-Math.log(u), 1 / k);
+}
+
+function sampleBinomial(n: number, p: number): number {
+  let successes = 0;
+  const trials = Math.round(n);
+  for (let i = 0; i < trials; i++) {
+    if (Math.random() < p) successes++;
+  }
+  return successes;
+}
+
+function samplePoisson(lambda: number): number {
+  // Knuth's algorithm
+  const L = Math.exp(-lambda);
+  let k = 0;
+  let p = 1;
+  do {
+    k++;
+    p *= Math.random();
+  } while (p > L);
+  return k - 1;
+}
+
+// Lanczos approximation of the gamma function (for Weibull mean)
+function gamma(z: number): number {
+  if (z < 0.5) return Math.PI / (Math.sin(Math.PI * z) * gamma(1 - z));
+  z -= 1;
+  const g = 7;
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+    771.32342877765313, -176.61502916214059, 12.507343278686905,
+    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  let x = c[0];
+  for (let i = 1; i < g + 2; i++) x += c[i] / (z + i);
+  const t = z + g + 0.5;
+  return Math.sqrt(2 * Math.PI) * Math.pow(t, z + 0.5) * Math.exp(-t) * x;
 }
 
 // ---------------------------------------------------------------------------

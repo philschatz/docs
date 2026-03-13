@@ -45,6 +45,48 @@ describe('distributions', () => {
       const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
       expect(samples.every(s => s > 0)).toBe(true);
     });
+
+    it('beta: samples within [0, 1]', () => {
+      const info: DistributionInfo = { type: 'beta', params: [2, 5] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s >= 0 && s <= 1)).toBe(true);
+    });
+
+    it('exponential: samples are positive', () => {
+      const info: DistributionInfo = { type: 'exponential', params: [2] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s > 0)).toBe(true);
+    });
+
+    it('gamma: samples are positive', () => {
+      const info: DistributionInfo = { type: 'gamma', params: [3, 2] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s > 0)).toBe(true);
+    });
+
+    it('weibull: samples are positive', () => {
+      const info: DistributionInfo = { type: 'weibull', params: [1, 1.5] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s > 0)).toBe(true);
+    });
+
+    it('bernoulli: samples are 0 or 1', () => {
+      const info: DistributionInfo = { type: 'bernoulli', params: [0.3] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s === 0 || s === 1)).toBe(true);
+    });
+
+    it('binomial: samples are non-negative integers', () => {
+      const info: DistributionInfo = { type: 'binomial', params: [20, 0.5] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s >= 0 && s <= 20 && Number.isInteger(s))).toBe(true);
+    });
+
+    it('poisson: samples are non-negative integers', () => {
+      const info: DistributionInfo = { type: 'poisson', params: [5] };
+      const samples = Array.from({ length: 1000 }, () => sampleDistribution(info));
+      expect(samples.every(s => s >= 0 && Number.isInteger(s))).toBe(true);
+    });
   });
 
   describe('distributionMean', () => {
@@ -68,6 +110,34 @@ describe('distributions', () => {
     it('lognormal mean', () => {
       const mean = distributionMean({ type: 'lognormal', params: [0, 1] });
       expect(mean).toBeCloseTo(Math.exp(0.5), 5);
+    });
+
+    it('beta mean', () => {
+      expect(distributionMean({ type: 'beta', params: [2, 5] })).toBeCloseTo(2 / 7, 5);
+    });
+
+    it('exponential mean', () => {
+      expect(distributionMean({ type: 'exponential', params: [4] })).toBeCloseTo(0.25, 5);
+    });
+
+    it('gamma mean', () => {
+      expect(distributionMean({ type: 'gamma', params: [3, 2] })).toBe(6);
+    });
+
+    it('cauchy returns location as mean', () => {
+      expect(distributionMean({ type: 'cauchy', params: [5, 2] })).toBe(5);
+    });
+
+    it('bernoulli mean', () => {
+      expect(distributionMean({ type: 'bernoulli', params: [0.7] })).toBe(0.7);
+    });
+
+    it('binomial mean', () => {
+      expect(distributionMean({ type: 'binomial', params: [20, 0.3] })).toBe(6);
+    });
+
+    it('poisson mean', () => {
+      expect(distributionMean({ type: 'poisson', params: [4.5] })).toBe(4.5);
     });
   });
 
