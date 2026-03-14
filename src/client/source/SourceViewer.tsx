@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
-import { findDocWithProgress, Automerge } from '../../shared/automerge';
+import { repo, Automerge } from '../../shared/automerge';
 import type { State } from '@automerge/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
+import { openDoc } from '../worker-api';
+import { getDocEntry } from '../doc-storage';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { HistorySlider } from '../../shared/HistorySlider';
@@ -253,7 +255,13 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
 
     (async () => {
       setLoadProgress(0);
-      const handle = await findDocWithProgress<CalendarDocument>(docId, setLoadProgress);
+      const entry = getDocEntry(docId);
+      await openDoc(docId, {
+        secure: entry?.encrypted,
+        onProgress: (pct) => { if (mounted) setLoadProgress(pct); },
+      });
+      const handle = await repo.find<CalendarDocument>(docId as any);
+      setLoadProgress(null);
       const doc = handle.doc();
       if (!mounted) return;
       if (!doc) {

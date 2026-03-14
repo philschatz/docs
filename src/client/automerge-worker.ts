@@ -2,13 +2,13 @@ import { deepAssign } from '../shared/deep-assign';
 import { syncToTarget } from '../shared/sync-to-target';
 import { validateDocument } from '../shared/schemas';
 import { KeyhiveOps, errMsg } from './keyhive-ops';
+import { populateDocRepoMap, setDocRepo, repoFor as _repoFor } from './repo-routing';
 
 export type MainToWorker =
-  | { type: 'init'; wsUrl: string; port?: MessagePort }
-  | { type: 'set-ws-url'; wsUrl: string }
+  | { type: 'init'; secureAvailable: boolean; docList: Array<{ id: string; encrypted?: boolean }>; port?: MessagePort }
   | { type: 'query'; id: number; docId: string; filter: string }
   // New worker-owned doc API
-  | { type: 'create-doc'; id: number; initialJson: any }
+  | { type: 'create-doc'; id: number; initialJson: any; secure: boolean }
   | { type: 'update-doc'; id: number; docId: string; fnSource: string; args: Record<string, unknown> }
   | { type: 'subscribe-query'; subId: number; docId: string; filter: string }
   | { type: 'unsubscribe-query'; subId: number }
@@ -34,7 +34,7 @@ export type MainToWorker =
   | { type: 'kh-register-doc-mapping'; automergeDocId: string; khDocId: string }
   | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string }
   | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; archiveBytes: number[]; automergeDocId: string }
-  | { type: 'open-doc'; id: number; docId: string }
+  | { type: 'open-doc'; id: number; docId: string; secure?: boolean }
   | { type: 'validate-subscribe'; docId: string }
   | { type: 'validate-unsubscribe'; docId: string };
 
@@ -79,18 +79,22 @@ try {
   Automerge = await import('@automerge/automerge');
   console.log('[worker] importing keyhive bridge...');
   khBridge = await import('../lib/automerge-repo-keyhive/index');
-  console.log('[worker] keyhive bridge imported, calling initKeyhiveWasm');
-  khBridge.initKeyhiveWasm();
-  console.log('[worker] initKeyhiveWasm done');
+  console.log('[worker] keyhive bridge imported (initKeyhiveWasm deferred to init handler)');
 } catch (err: any) {
   console.error('[worker] Failed to load modules:', err);
   (self as any).postMessage({ type: 'error', message: `Module load failed: ${errMsg(err)}` });
   throw err;
 }
 
-let repo: InstanceType<typeof Repo> | null = null;
+let secureRepo: InstanceType<typeof Repo> | null = null;
+let insecureRepo: InstanceType<typeof Repo> | null = null;
 let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = null;
 let khOps: KeyhiveOps | null = null;
+
+/** Pick the correct repo for a given docId based on the docRepoMap. */
+function getRepo(docId: string): InstanceType<typeof Repo> {
+  return _repoFor(docId, secureRepo, insecureRepo);
+}
 
 // --- Doc registry for worker-owned subscriptions ---
 
@@ -109,8 +113,8 @@ const subIdToDocId = new Map<number, string>();
 async function getOrLoadHandle(docId: string): Promise<any> {
   const existing = docRegistry.get(docId);
   if (existing) return existing.handle;
-  if (!repo) throw new Error('Repo not initialized');
-  const handle = await repo.find(docId as any);
+  const r = getRepo(docId);
+  const handle = await r.find(docId as any);
   return handle;
 }
 
@@ -167,7 +171,9 @@ function pushValidation(docId: string, doc: any) {
 }
 
 function postStatus() {
-  const peers = repo ? repo.peers : [];
+  const securePeers = secureRepo ? secureRepo.peers : [];
+  const insecurePeers = insecureRepo ? insecureRepo.peers : [];
+  const peers = [...securePeers, ...insecurePeers];
   const peerCount = peers.length;
   (self as any).postMessage({ type: peerCount > 0 ? 'peer-connected' : 'peer-disconnected', peerCount, peers } satisfies WorkerToMain);
 }
@@ -178,77 +184,110 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 
   if (msg.type === 'init') {
     try {
-      console.log('[worker] init message received');
-      if (!khBridge) throw new Error('Keyhive bridge not loaded');
+      console.log('[worker] init message received, secureAvailable:', msg.secureAvailable);
 
-      const storageAdapter = new IndexedDBStorageAdapter();
-
-      // Create a base WebSocket adapter (if sync URL is provided)
-      const wsAdapter = msg.wsUrl
-        ? new BrowserWebSocketClientAdapter(msg.wsUrl)
-        : new BrowserWebSocketClientAdapter('ws://localhost:1'); // dummy, won't connect
-
-      // Initialize keyhive + keyhive-aware network adapter
-      khIntegration = await khBridge.initializeAutomergeRepoKeyhive({
-        storage: storageAdapter,
-        peerIdSuffix: 'drive',
-        networkAdapter: wsAdapter,
-        onlyShareWithHardcodedServerPeerId: false,
-        periodicallyRequestSync: true,
-        automaticArchiveIngestion: true,
-        cacheHashes: false,
-        syncRequestInterval: 2000,
-      });
-
-      // Create repo with keyhive-signed network + plain storage.
-      const noopSubduction = {
+      // --- Always create insecure repo ---
+      const insecureStorage = new IndexedDBStorageAdapter('automerge-insecure');
+      const insecureWs = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
+      const insecureSubduction = {
         storage: {},
         removeSedimentree() {},
         connectDiscover() {},
         disconnectAll() {},
         disconnectFromPeer() {},
         syncAll() { return Promise.resolve({ entries() { return []; } }); },
-        getBlobs(sedimentreeId: any) {
-          if (!repo?.storageSubsystem) return Promise.resolve([]);
-          try {
-            const docId = toDocumentId(sedimentreeId);
-            return repo.storageSubsystem.loadDocData(docId)
-              .then((data: Uint8Array | null) => data ? [data] : []);
-          } catch {
-            return Promise.resolve([]);
-          }
-        },
+        getBlobs() { return Promise.resolve([]); },
         addCommit() { return Promise.resolve(undefined); },
         addFragment() { return Promise.resolve(undefined); },
       };
-      repo = new Repo({
-        network: [khIntegration.networkAdapter],
-        storage: storageAdapter,
-        subduction: noopSubduction,
-        peerId: khIntegration.peerId,
+      insecureRepo = new Repo({
+        network: [insecureWs],
+        storage: insecureStorage,
+        subduction: insecureSubduction,
+        peerId: crypto.randomUUID() as any,
       } as any);
+      const insecureNs = insecureRepo.networkSubsystem;
+      insecureNs.on('peer', postStatus);
+      insecureNs.on('peer-disconnected', postStatus);
+      console.log('[worker] insecure repo created');
 
-      khIntegration.linkRepo(repo);
+      // --- Create secure repo if available ---
+      if (msg.secureAvailable) {
+        if (!khBridge) throw new Error('Keyhive bridge not loaded');
 
-      khOps = new KeyhiveOps(khIntegration.keyhive, khBridge as any, {
-        persist: () => khIntegration!.keyhiveStorage.saveKeyhiveWithHash(khIntegration!.keyhive),
-        syncKeyhive: () => khIntegration!.networkAdapter.syncKeyhive(),
-        registerDoc: (amDocId, khDocId) => khIntegration!.networkAdapter.registerDoc(amDocId, khDocId),
-        forceResyncAllPeers: () => (khIntegration!.networkAdapter as any).forceResyncAllPeers(),
-        findDoc: (docId) => repo!.find(docId as any),
-      });
+        await khBridge.initKeyhiveWasm();
+        console.log('[worker] keyhive WASM initialized');
 
-      const ns = repo.networkSubsystem;
-      ns.on('peer', postStatus);
-      ns.on('peer-disconnected', postStatus);
+        const secureStorage = new IndexedDBStorageAdapter();
+        const secureWs = new BrowserWebSocketClientAdapter(`ws://${self.location?.hostname || 'localhost'}:${3000}`);
 
-      if (msg.port) {
-        const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
-        repo.networkSubsystem.addNetworkAdapter(new MessageChannelNetworkAdapter(msg.port));
+        khIntegration = await khBridge.initializeAutomergeRepoKeyhive({
+          storage: secureStorage,
+          peerIdSuffix: 'drive',
+          networkAdapter: secureWs,
+          onlyShareWithHardcodedServerPeerId: false,
+          periodicallyRequestSync: true,
+          automaticArchiveIngestion: true,
+          cacheHashes: false,
+          syncRequestInterval: 2000,
+        });
+
+        const noopSubduction = {
+          storage: {},
+          removeSedimentree() {},
+          connectDiscover() {},
+          disconnectAll() {},
+          disconnectFromPeer() {},
+          syncAll() { return Promise.resolve({ entries() { return []; } }); },
+          getBlobs(sedimentreeId: any) {
+            if (!secureRepo?.storageSubsystem) return Promise.resolve([]);
+            try {
+              const docId = toDocumentId(sedimentreeId);
+              return secureRepo.storageSubsystem.loadDocData(docId)
+                .then((data: Uint8Array | null) => data ? [data] : []);
+            } catch {
+              return Promise.resolve([]);
+            }
+          },
+          addCommit() { return Promise.resolve(undefined); },
+          addFragment() { return Promise.resolve(undefined); },
+        };
+        secureRepo = new Repo({
+          network: [khIntegration.networkAdapter],
+          storage: secureStorage,
+          subduction: noopSubduction,
+          peerId: khIntegration.peerId,
+        } as any);
+
+        khIntegration.linkRepo(secureRepo);
+
+        khOps = new KeyhiveOps(khIntegration.keyhive, khBridge as any, {
+          persist: () => khIntegration!.keyhiveStorage.saveKeyhiveWithHash(khIntegration!.keyhive),
+          syncKeyhive: () => khIntegration!.networkAdapter.syncKeyhive(),
+          registerDoc: (amDocId, khDocId) => khIntegration!.networkAdapter.registerDoc(amDocId, khDocId),
+          forceResyncAllPeers: () => (khIntegration!.networkAdapter as any).forceResyncAllPeers(),
+          findDoc: (docId) => secureRepo!.find(docId as any),
+        });
+
+        const secureNs = secureRepo.networkSubsystem;
+        secureNs.on('peer', postStatus);
+        secureNs.on('peer-disconnected', postStatus);
+
+        console.log('[worker] secure repo created, peerId:', khIntegration.peerId);
+        (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
       }
 
-      console.log('[worker] init complete, peerId:', khIntegration.peerId);
-      (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
+      // --- Populate docRepoMap from init doc list ---
+      populateDocRepoMap(msg.docList);
+
+      // --- Attach MessageChannel port to primary repo ---
+      if (msg.port) {
+        const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
+        const primaryRepo = secureRepo ?? insecureRepo;
+        primaryRepo.networkSubsystem.addNetworkAdapter(new MessageChannelNetworkAdapter(msg.port));
+      }
+
+      console.log('[worker] init complete');
       (self as any).postMessage({ type: 'ready' } satisfies WorkerToMain);
     } catch (err: any) {
       console.error('[worker] init failed:', err);
@@ -256,24 +295,23 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'set-ws-url') {
-    // Reconnect WebSocket with new URL
-    if (!repo || !khIntegration || !msg.wsUrl) return;
-    const newWsAdapter = new BrowserWebSocketClientAdapter(msg.wsUrl);
-    const newKhAdapter = khIntegration.createKeyhiveNetworkAdapter(
-      newWsAdapter, false, true, 2000,
-    );
-    repo.networkSubsystem.addNetworkAdapter(newKhAdapter);
-  }
-
   // --- New worker-owned doc API ---
 
   if (msg.type === 'create-doc') {
     try {
-      if (!repo || !khOps) throw new Error('Repo not initialized');
-      const handle = repo.create(msg.initialJson);
+      let handle: any;
+      let khDocId: string | undefined;
+      if (msg.secure) {
+        if (!secureRepo || !khOps) throw new Error('Secure repo not available');
+        handle = secureRepo.create(msg.initialJson);
+        const sharing = await khOps.enableSharing(handle.documentId);
+        khDocId = sharing.khDocId;
+      } else {
+        if (!insecureRepo) throw new Error('Insecure repo not available');
+        handle = insecureRepo.create(msg.initialJson);
+      }
       const docId = handle.documentId;
-      const { khDocId } = await khOps.enableSharing(docId);
+      setDocRepo(docId, msg.secure ? 'secure' : 'insecure');
       (self as any).postMessage({ type: 'result', id: msg.id, result: { docId, khDocId } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -285,6 +323,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     const progress = (pct: number, message: string) =>
       post.postMessage({ type: 'open-doc-progress', id: msg.id, pct, message } satisfies WorkerToMain);
     try {
+      // Record secure hint in docRepoMap if provided
+      if (msg.secure !== undefined) {
+        setDocRepo(msg.docId, msg.secure ? 'secure' : 'insecure');
+      }
       progress(10, 'Finding document\u2026');
       const handle = await getOrLoadHandle(msg.docId);
       getOrCreateEntry(msg.docId, handle);

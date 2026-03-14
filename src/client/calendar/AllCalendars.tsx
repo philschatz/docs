@@ -3,6 +3,8 @@ import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import { repo } from '../../shared/automerge';
 import type { DocHandle, PeerState, Presence } from '../../shared/automerge';
+import { openDoc } from '../worker-api';
+import { getDocEntry } from '../doc-storage';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { deepAssign } from '../../shared/deep-assign';
@@ -254,8 +256,10 @@ export function AllCalendars({ path }: { path?: string }) {
       const loaded: LoadedCalendar[] = [];
       await Promise.all(allIds.map(async (id) => {
         try {
+          const entry = getDocEntry(id);
           const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000));
-          const handle = await Promise.race([repo.find<CalendarDocument>(id as any), timeout]);
+          await Promise.race([openDoc(id, { secure: entry?.encrypted }), timeout]);
+          const handle = await repo.find<CalendarDocument>(id as any);
           const doc = handle.doc();
           if (!doc || doc['@type'] !== 'Calendar') return;
           if (!mounted) return;

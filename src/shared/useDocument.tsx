@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
 import { openDoc } from '../client/worker-api';
+import { addDocId, getDocEntry } from '../client/doc-storage';
 import { Progress } from '../client/components/ui/progress';
 
 export type DocStatus = 'loading' | 'ready' | 'error';
@@ -23,10 +24,18 @@ export function useDocument(docId: string | undefined) {
     setError(null);
 
     let cancelled = false;
-    openDoc(docId, (pct, msg) => {
-      if (!cancelled) { setProgress(pct); setMessage(msg); }
+    const entry = getDocEntry(docId);
+    openDoc(docId, {
+      secure: entry?.encrypted,
+      onProgress: (pct, msg) => { if (!cancelled) { setProgress(pct); setMessage(msg); } },
     })
-      .then(() => { if (!cancelled) { setProgress(100); setMessage('Ready'); setStatus('ready'); } })
+      .then(() => {
+        if (!cancelled) {
+          setProgress(100); setMessage('Ready'); setStatus('ready');
+          // Ensure the doc appears in the home page doc list (e.g. when visiting a shared URL)
+          addDocId(docId, { encrypted: entry?.encrypted });
+        }
+      })
       .catch((err) => { if (!cancelled) { setStatus('error'); setError(err.message); } });
 
     return () => { cancelled = true; };

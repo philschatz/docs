@@ -88,8 +88,8 @@ function fire(type: string, payload: Record<string, any> = {}): void {
 
 // ── Document mutations ──────────────────────────────────────────────────────
 
-export function createDoc(initialJson: any): Promise<{ docId: string; khDocId: string }> {
-  return request<{ docId: string; khDocId: string }>('create-doc', { initialJson });
+export function createDoc(initialJson: any, secure = true): Promise<{ docId: string; khDocId?: string }> {
+  return request<{ docId: string; khDocId?: string }>('create-doc', { initialJson, secure });
 }
 
 /**
@@ -98,8 +98,9 @@ export function createDoc(initialJson: any): Promise<{ docId: string; khDocId: s
  */
 export function openDoc(
   docId: string,
-  onProgress?: (pct: number, message: string) => void,
+  opts?: { secure?: boolean; onProgress?: (pct: number, message: string) => void },
 ): Promise<{ docId: string }> {
+  const { secure, onProgress } = opts ?? {};
   return workerReady.then(() => {
     const id = ++idCounter;
     if (onProgress) openDocProgressCallbacks.set(id, onProgress);
@@ -108,7 +109,7 @@ export function openDoc(
         resolve: (v) => { openDocProgressCallbacks.delete(id); resolve(v); },
         reject: (e) => { openDocProgressCallbacks.delete(id); reject(e); },
       });
-      _worker().postMessage({ type: 'open-doc', id, docId });
+      _worker().postMessage({ type: 'open-doc', id, docId, secure });
     });
   });
 }

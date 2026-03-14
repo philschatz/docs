@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
-import { useConnectionStatus, usePeerList, isSyncEnabled, setSyncEnabled } from '../../shared/automerge';
+import { useConnectionStatus, usePeerList } from '../../shared/automerge';
 import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
 import { peerColor } from '../../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
+import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
-import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry, isSecureAvailable } from '@/doc-storage';
 import { getAllInviteRecords, removeInviteRecord, removeInviteRecordsForDoc } from '@/invite-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
@@ -73,6 +74,8 @@ export function Home({ path }: { path?: string }) {
   const [error, setError] = useState('');
   const connected = useConnectionStatus();
   const repoPeers = usePeerList();
+  const secureAvailable = isSecureAvailable();
+  const [createSecure, setCreateSecure] = useState(secureAvailable);
 
   // Subscribe to doc summaries from the worker
   const docIdKey = entries.map(e => e.documentId).join(',');
@@ -124,8 +127,8 @@ export function Home({ path }: { path?: string }) {
     const name = prompt('Calendar name:', 'Untitled');
     if (name === null) return;
     const resolvedName = name || 'Untitled';
-    const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: resolvedName, events: {} });
-    addDocId(docId, { type: 'Calendar', name: resolvedName, khDocId });
+    const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: resolvedName, events: {} }, createSecure);
+    addDocId(docId, { type: 'Calendar', name: resolvedName, khDocId, encrypted: createSecure });
     window.location.hash = viewPathForType('Calendar', docId);
   };
 
@@ -133,8 +136,8 @@ export function Home({ path }: { path?: string }) {
     const name = prompt('Task list name:', 'Untitled');
     if (name === null) return;
     const resolvedName = name || 'Untitled';
-    const { docId, khDocId } = await createDoc({ '@type': 'TaskList', name: resolvedName, tasks: {} });
-    addDocId(docId, { type: 'TaskList', name: resolvedName, khDocId });
+    const { docId, khDocId } = await createDoc({ '@type': 'TaskList', name: resolvedName, tasks: {} }, createSecure);
+    addDocId(docId, { type: 'TaskList', name: resolvedName, khDocId, encrypted: createSecure });
     window.location.hash = viewPathForType('TaskList', docId);
   };
 
@@ -159,8 +162,8 @@ export function Home({ path }: { path?: string }) {
           cells: {},
         },
       },
-    });
-    addDocId(docId, { type: 'DataGrid', name: resolvedName, khDocId });
+    }, createSecure);
+    addDocId(docId, { type: 'DataGrid', name: resolvedName, khDocId, encrypted: createSecure });
     window.location.hash = viewPathForType('DataGrid', docId);
   };
 
@@ -291,8 +294,8 @@ export function Home({ path }: { path?: string }) {
           columns: s.columns, rows: s.rows, cells: s.cells,
         };
       }
-      const { docId, khDocId } = await createDoc({ '@type': 'DataGrid', name, sheets });
-      addDocId(docId, { type: 'DataGrid', name, khDocId });
+      const { docId, khDocId } = await createDoc({ '@type': 'DataGrid', name, sheets }, createSecure);
+      addDocId(docId, { type: 'DataGrid', name, khDocId, encrypted: createSecure });
       alert(`/datagrids/${docId}`)
     } catch (err: any) {
       setError('Failed to import: ' + err.message);
@@ -321,10 +324,10 @@ export function Home({ path }: { path?: string }) {
       const data = JSON.parse(text);
       if (!data || typeof data !== 'object') throw new Error('Invalid JSON: expected an object');
       const name = data.name || file.name.replace(/\.json$/i, '') || 'Imported';
-      const { docId, khDocId } = await createDoc(data);
+      const { docId, khDocId } = await createDoc(data, createSecure);
       const type = (data['@type'] === 'Calendar' || data['@type'] === 'TaskList' || data['@type'] === 'DataGrid')
         ? data['@type'] as DocType : 'unknown';
-      addDocId(docId, { type, name, khDocId });
+      addDocId(docId, { type, name, khDocId, encrypted: createSecure });
       setMessage(`Imported "${name}"`);
       setError('');
       reloadEntries();
@@ -346,8 +349,8 @@ export function Home({ path }: { path?: string }) {
       const calName = file.name.replace(/\.ics$/i, '') || 'Imported';
       const events: Record<string, any> = {};
       for (const { uid, event } of parsed) events[uid] = event;
-      const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: calName, events });
-      addDocId(docId, { type: 'Calendar', name: calName, khDocId });
+      const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: calName, events }, createSecure);
+      addDocId(docId, { type: 'Calendar', name: calName, khDocId, encrypted: createSecure });
       setMessage(`Imported ${parsed.length} event${parsed.length !== 1 ? 's' : ''} into "${calName}"`);
       setError('');
       reloadEntries();
@@ -375,8 +378,6 @@ export function Home({ path }: { path?: string }) {
     const { outcome } = await installPrompt.userChoice;
     if (outcome === 'accepted') setInstallPrompt(null);
   };
-
-  const syncOn = isSyncEnabled();
 
   const sortedEntries = useMemo(() => {
     const indexById = new Map(entries.map((e, i) => [e.documentId, i]));
@@ -430,6 +431,11 @@ export function Home({ path }: { path?: string }) {
             <span className="material-symbols-outlined">date_range</span> All calendars
           </Button>
         </a>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none" title={secureAvailable ? 'Create encrypted documents with keyhive' : 'Encryption only available on localhost'}>
+          <Switch checked={createSecure} onCheckedChange={setCreateSecure} disabled={!secureAvailable} />
+          <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{createSecure ? 'lock' : 'visibility'}</span>
+          Encrypted
+        </label>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
@@ -480,6 +486,9 @@ export function Home({ path }: { path?: string }) {
               key={entry.documentId}
               className="flex items-center gap-2 py-1 px-1 flex-nowrap border-b border-border"
             >
+              <span className="material-symbols-outlined" style={{ width: '1rem', textAlign: 'center', color: '#999', fontSize: '0.9rem' }} title={getDocEntry(entry.documentId)?.encrypted ? 'Encrypted' : 'Unencrypted'}>
+                {getDocEntry(entry.documentId)?.encrypted ? 'lock' : 'visibility'}
+              </span>
               <span className="material-symbols-outlined" style={{ width: '1.2rem', textAlign: 'center', color: '#666' }}>{icon}</span>
               <a href={viewPath} className="text-sm flex-1 hover:underline flex items-center gap-1">
                 {entry.name || 'Untitled'}
@@ -527,25 +536,13 @@ export function Home({ path }: { path?: string }) {
       </div>
 
       <div className="flex items-center gap-2 mb-2">
-        <a href="#/settings">
-          <Button variant="outline" size="sm">
-            <span className="material-symbols-outlined">settings</span> Settings & Devices
-          </Button>
-        </a>
-      </div>
-
-      <div className="flex items-center gap-2 mb-6">
-        <span className="text-xs text-muted-foreground">Sync server</span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            setSyncEnabled(!syncOn);
-            location.reload();
-          }}
-        >
-          {syncOn ? 'Disable & reload' : 'Enable & reload'}
-        </Button>
+        {secureAvailable && (
+          <a href="#/settings">
+            <Button variant="outline" size="sm">
+              <span className="material-symbols-outlined">settings</span> Settings & Devices
+            </Button>
+          </a>
+        )}
         {installPrompt ? (
           <Button variant="outline" size="sm" onClick={handleInstall}>
             <span className="material-symbols-outlined">install_mobile</span> Add to Homescreen
