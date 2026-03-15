@@ -77,37 +77,12 @@ function keyhiveWasmPlugin(): Plugin {
   };
 }
 
-// Same pattern as keyhiveWasmPlugin — vite-plugin-wasm doesn't handle .wasm
-// imports correctly in web workers for automerge-subduction's wasm-bindgen output.
-function subductionWasmPlugin(): Plugin {
-  return {
-    name: 'subduction-wasm',
-    load(id) {
-      if (id.includes('automerge-subduction') && id.endsWith('automerge_subduction_wasm.js')) {
-        return `
-          import wasmUrl from "./automerge_subduction_wasm_bg.wasm?url";
-          import * as bg from "./automerge_subduction_wasm_bg.js";
-          const imports = { "./automerge_subduction_wasm_bg.js": bg };
-          const wasmResponse = await fetch(wasmUrl);
-          const { instance } = await WebAssembly.instantiateStreaming(wasmResponse, imports);
-          bg.__wbg_set_wasm(instance.exports);
-          instance.exports.__wbindgen_start();
-          export {
-            AuthenticatedLongPoll, AuthenticatedWebSocket, BatchSyncRequest, BatchSyncResponse,
-            BlobMeta, Boundary, CallError, CommitWithBlob, ConnErrorPair, ConnectionId, Depth,
-            Digest, Fragment, FragmentRequested, FragmentState, FragmentStateStore, FragmentWithBlob,
-            FragmentsArray, HashMetric, LooseCommit, MemoryStorage, Message, Nonce,
-            PeerBatchSyncResult, PeerId, PeerResultMap, RequestId, Sedimentree,
-            SedimentreeAutomerge, SedimentreeId, SedimentreeIdsArray, SignedFragment,
-            SignedLooseCommit, Subduction, SubductionLongPoll, SubductionLongPollConnection,
-            SubductionWebSocket, SyncStats, WebCryptoSigner, digestOfBase58Id,
-            setSubductionLogLevel, set_panic_hook, start
-          } from "./automerge_subduction_wasm_bg.js";
-        `;
-      }
-    },
-  };
-}
+// Resolve @automerge/automerge-subduction to its "web" entrypoint which
+// initializes WASM from a base64-encoded string via initSync().
+// The default "browser/bundler" entrypoint uses `import * as wasm from ".wasm"`
+// which vite-plugin-wasm doesn't handle correctly, leaving the WASM exports
+// undefined at runtime.
+const subductionEntry = resolve(__dirname, 'node_modules/@automerge/automerge-subduction/dist/esm/web.js');
 
 export default defineConfig(async () => {
   const istanbulPlugins = process.env.CYPRESS_COVERAGE
@@ -129,7 +104,6 @@ export default defineConfig(async () => {
     radixPreactPatchPlugin(),
     automergeWasmPlugin(),
     keyhiveWasmPlugin(),
-    subductionWasmPlugin(),
     ...istanbulPlugins,
     VitePWA({
       registerType: 'autoUpdate',
@@ -174,13 +148,14 @@ export default defineConfig(async () => {
   },
   worker: {
     format: 'es' as const,
-    plugins: () => [wasm(), keyhiveWasmPlugin(), subductionWasmPlugin()],
+    plugins: () => [wasm(), keyhiveWasmPlugin()],
   },
   resolve: {
     alias: {
       '@/': resolve(__dirname, 'src/client') + '/',
       '@automerge/automerge/slim': automergeEntry,
       '@automerge/automerge': automergeEntry,
+      '@automerge/automerge-subduction': subductionEntry,
     },
     dedupe: ['preact', '@preact/signals', '@preact/signals-core'],
   },
