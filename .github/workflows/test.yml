@@ -10,13 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: cargo install wasm-pack
+
       - run: npm ci
+      - run: npm run build:keyhive
 
       - name: Type check (backend)
         run: npx tsc --noEmit
