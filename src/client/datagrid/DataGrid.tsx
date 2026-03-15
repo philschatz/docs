@@ -106,6 +106,25 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
   const [currentSheetId, setCurrentSheetId] = useState<string | null>(null);
 
+  const addRows = () => {
+    const count = Math.max(1, Math.min(1000, addRowCount));
+    if (!currentSheetId || !docId) return;
+    const sid = currentSheetId;
+    const docSnap = docRef.current;
+    if (!docSnap) return;
+    const rowEntries = sortedEntries(docSnap.sheets[sid].rows);
+    const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
+    const newRowEntries: Array<[string, { index: number }]> = [];
+    for (let i = 0; i < count; i++) {
+      newRowEntries.push([shortId(), { index: lastIdx + i + 1 }]);
+    }
+    mutate((d) => {
+      for (const [id, entry] of newRowEntries) {
+        d.sheets[sid].rows[id] = entry as any;
+      }
+    }, { sid, newRowEntries });
+  };
+
   // Memoize sorted IDs from the current sheet
   const docState = docRef.current;
   // Fall back to first sheet if currentSheetId doesn't exist in this doc version
@@ -1367,24 +1386,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
             <div className="add-rows-bar">
               <button
                 className="add-rows-link"
-                onClick={() => {
-                  const count = Math.max(1, Math.min(1000, addRowCount));
-                  if (!currentSheetId || !docId) return;
-                  const sid = currentSheetId;
-                  const docSnap = docRef.current;
-                  if (!docSnap) return;
-                  const rowEntries = sortedEntries(docSnap.sheets[sid].rows);
-                  const lastIdx = rowEntries.length > 0 ? rowEntries[rowEntries.length - 1][1].index : 0;
-                  const newRowEntries: Array<[string, { index: number }]> = [];
-                  for (let i = 0; i < count; i++) {
-                    newRowEntries.push([shortId(), { index: lastIdx + i + 1 }]);
-                  }
-                  mutate((d) => {
-                    for (const [id, entry] of newRowEntries) {
-                      d.sheets[sid].rows[id] = entry as any;
-                    }
-                  }, { sid, newRowEntries });
-                }}
+                onClick={() => addRows()}
               >Add</button>
               {' '}
               <input
@@ -1394,7 +1396,10 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
                 min={1}
                 max={1000}
                 onInput={(e: any) => setAddRowCount(parseInt(e.currentTarget.value, 10) || 10)}
-                onKeyDown={(e: any) => e.stopPropagation()}
+                onKeyDown={(e: any) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') addRows();
+                }}
               />
               {' more rows at the bottom'}
             </div>
