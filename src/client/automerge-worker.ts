@@ -14,6 +14,7 @@ export type MainToWorker =
   | { type: 'unsubscribe-query'; subId: number }
   | { type: 'set-doc-version'; docId: string; version: number | null }
   | { type: 'get-doc-history'; id: number; docId: string }
+  | { type: 'debug-get-version-patches'; id: number; docId: string; version: number }
   | { type: 'restore-doc-to-heads'; id: number; docId: string; heads: string[] }
   | { type: 'restore-doc-to-version'; id: number; docId: string; version: number }
   | { type: 'presence-subscribe'; docId: string }
@@ -453,6 +454,22 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const history = Automerge.getHistory(doc);
       const result = history.map((e: any, i: number) => ({ version: i, time: e.change.time }));
       (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'debug-get-version-patches') {
+    try {
+      const handle = await getOrLoadHandle(msg.docId);
+      const doc = handle.doc();
+      if (!doc) throw new Error('Document not ready');
+      const history = Automerge.getHistory(doc);
+      if (msg.version < 0 || msg.version >= history.length) throw new Error('Version out of range');
+      const afterHash = history[msg.version].change.hash;
+      const beforeHeads = msg.version === 0 ? [] : [history[msg.version - 1].change.hash];
+      const patches = Automerge.diff(doc, beforeHeads, [afterHash]);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: patches } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }

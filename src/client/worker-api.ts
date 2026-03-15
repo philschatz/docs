@@ -197,6 +197,10 @@ export function getDocHistory(docId: string): Promise<Array<{ version: number; t
   return request('get-doc-history', { docId });
 }
 
+export function debugGetVersionPatches(docId: string, version: number): Promise<any[]> {
+  return request('debug-get-version-patches', { docId, version });
+}
+
 /**
  * Pin all subscriptions for a document to a historical version.
  * Pass null to resume live view. Worker immediately re-runs all subscriptions.

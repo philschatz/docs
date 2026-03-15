@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import type { PeerState } from '../../shared/automerge';
-import { openDoc, subscribeQuery, updateDoc, getDocHistory, setDocVersion } from '../worker-api';
+import { openDoc, subscribeQuery, updateDoc, getDocHistory, debugGetVersionPatches, setDocVersion } from '../worker-api';
 import { getDocEntry } from '../doc-storage';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
@@ -181,7 +181,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
   const [historyMeta, setHistoryMeta] = useState<Array<{ version: number; time: number }>>([]);
   const [changeCount, setChangeCount] = useState(0);
   const [version, setVersion] = useState(0);
-  const versionPatches: any[] = [];
+  const [versionPatches, setVersionPatches] = useState<any[]>([]);
   const [docName, setDocName] = useState('Document');
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const atLatest = useRef(true);
@@ -247,12 +247,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
           document.title = result.name + ' - Source Editor';
         }
         setStatus('');
-        // Track change count for history slider
-        setChangeCount(prev => {
-          const next = prev + (prev === 0 ? 0 : 1);
-          if (atLatest.current) setVersion(next > 0 ? next - 1 : 0);
-          return next;
-        });
+        loadHistory();
       });
 
       // Presence
@@ -264,13 +259,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       broadcastRef.current = broadcast;
       presenceCleanupRef.current = () => { unsubQuery(); presenceCleanup(); };
 
-      // Load history metadata in the background
-      getDocHistory(docId).then((h) => {
-        if (!mounted) return;
-        setHistoryMeta(h);
-        setChangeCount(h.length);
-        if (h.length > 0) setVersion(h.length - 1);
-      }).catch(e => console.error('getDocHistory failed:', e));
+      // Initial history load will happen via the subscription callback calling loadHistory()
     })().catch((err) => {
       if (!mounted) return;
       const msg = err?.message || 'Failed to load document';
@@ -287,6 +276,18 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       if (docId) setDocVersion(docId, null);
     };
   }, [docId]);
+
+  // Fetch patches for the selected version
+  useEffect(() => {
+    if (!docId || changeCount === 0) return;
+    let cancelled = false;
+    debugGetVersionPatches(docId, version).then(patches => {
+      if (!cancelled) setVersionPatches(patches);
+    }).catch(() => {
+      if (!cancelled) setVersionPatches([]);
+    });
+    return () => { cancelled = true; };
+  }, [docId, version, changeCount]);
 
   const isLatest = atLatest.current;
   const editable = isLatest;
