@@ -13,17 +13,7 @@ import {
   type IdentityInfo,
   type DeviceInfo,
 } from '../../shared/keyhive-api';
-import { isSecureAvailable } from '../doc-storage';
-
 export function Settings({ path }: { path?: string }) {
-  if (!isSecureAvailable()) {
-    return (
-      <div className="p-4">
-        <p className="text-sm text-muted-foreground mb-4">Settings are only available when running locally (HTTP).</p>
-        <a href="#/"><Button variant="outline" size="sm">Back to documents</Button></a>
-      </div>
-    );
-  }
   const [identity, setIdentity] = useState<IdentityInfo | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);

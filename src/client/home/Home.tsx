@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 import { a1ToInternal } from '@/datagrid/helpers';
-import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry, isSecureAvailable } from '@/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
 import { getAllInviteRecords, removeInviteRecord, removeInviteRecordsForDoc } from '@/invite-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
@@ -74,8 +74,7 @@ export function Home({ path }: { path?: string }) {
   const [error, setError] = useState('');
   const connected = useConnectionStatus();
   const repoPeers = usePeerList();
-  const secureAvailable = isSecureAvailable();
-  const [createSecure, setCreateSecure] = useState(secureAvailable);
+  const [createSecure, setCreateSecure] = useState(true);
 
   // Subscribe to doc summaries from the worker
   const docIdKey = entries.map(e => e.documentId).join(',');
@@ -431,13 +430,11 @@ export function Home({ path }: { path?: string }) {
             <span className="material-symbols-outlined">date_range</span> All calendars
           </Button>
         </a>
-        {secureAvailable && (
-          <a href="#/settings">
-            <Button variant="outline">
-              <span className="material-symbols-outlined">settings</span> Settings
-            </Button>
-          </a>
-        )}
+        <a href="#/settings">
+          <Button variant="outline">
+            <span className="material-symbols-outlined">settings</span> Settings
+          </Button>
+        </a>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
@@ -473,9 +470,8 @@ export function Home({ path }: { path?: string }) {
             </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onSelect={(e) => { e.preventDefault(); if (secureAvailable) setCreateSecure(v => !v); }}
-              disabled={!secureAvailable}
-              title={secureAvailable ? 'Create encrypted documents with keyhive' : 'Encryption only available on localhost'}
+              onSelect={(e) => { e.preventDefault(); setCreateSecure(v => !v); }}
+              title="Create encrypted documents with keyhive"
             >
               <span className="material-symbols-outlined">{createSecure ? 'check_box' : 'check_box_outline_blank'}</span>
               <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{createSecure ? 'lock' : 'visibility'}</span>

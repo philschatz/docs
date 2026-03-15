@@ -64,10 +64,6 @@ export function getDocEntry(id: string): DocEntry | undefined {
   return getDocList().find(e => e.id === id);
 }
 
-/** Whether keyhive/secure mode is available (only on localhost/http) */
-export function isSecureAvailable(): boolean {
-  return typeof location === 'undefined' || location.protocol === 'http:';
-}
 
 export function updateDocCache(id: string, cache: Omit<DocEntry, 'id'>) {
   const list = getDocList();
