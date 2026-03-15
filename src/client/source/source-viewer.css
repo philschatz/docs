@@ -1,9 +1,25 @@
 /* Source Viewer layout */
 .viewer {
-  font-family: system-ui, -apple-system, sans-serif;
-  max-width: 960px;
-  margin: 2rem auto;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.viewer-body {
+  flex: 1;
+  overflow: auto;
+  max-width: 80rem;
+  width: 100%;
+  margin: 0 auto;
   padding: 0 1rem;
+}
+
+.viewer-panels {
+  max-width: 80rem;
+  width: 100%;
+  margin: 0.5rem auto 0;
+  padding: 0 1rem 1rem;
 }
 
 

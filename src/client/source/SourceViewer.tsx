@@ -432,15 +432,14 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
       </EditorTitleBar>
 
       {loadProgress !== null && (
-        <Progress className="my-1" value={loadProgress} />
+        <Progress className="my-1 mx-4" value={loadProgress} />
       )}
-      {status && <div className="viewer-status">{status}</div>}
+      {status && <div className="viewer-status mx-4">{status}</div>}
 
-      {(currentDoc || changeCount > 0) && (
-        <>
-          <HistorySlider history={historyAdapter} dismissable={false} />
-
+      <div className="viewer-body">
+        {(currentDoc || changeCount > 0) && (
           <>
+            <HistorySlider history={historyAdapter} dismissable={false} />
             <ValidationPanel
               errors={validationErrors}
               variant="dark"
@@ -467,13 +466,15 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
               <div className="viewer-status">Failed to load snapshot for this version.</div>
             )}
           </>
-        </>
-      )}
+        )}
 
-      <PatchTable patches={versionPatches} />
-      <PresenceLogTable entries={presenceLog} onClear={clearLog} />
-      {snapshot && <JqPanel data={snapshot} docType={snapshot?.['@type']} />}
-      <ClipboardInspector />
+        <div className="viewer-panels">
+          <PatchTable patches={versionPatches} />
+          <PresenceLogTable entries={presenceLog} onClear={clearLog} />
+          {snapshot && <JqPanel data={snapshot} docType={snapshot?.['@type']} />}
+          <ClipboardInspector />
+        </div>
+      </div>
     </div>
   );
 }

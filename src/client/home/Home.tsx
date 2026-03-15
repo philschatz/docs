@@ -4,8 +4,7 @@ import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
 import { peerColor } from '../../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { Switch } from '@/components/ui/switch';
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
@@ -432,11 +431,6 @@ export function Home({ path }: { path?: string }) {
             <span className="material-symbols-outlined">date_range</span> All calendars
           </Button>
         </a>
-        <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none" title={secureAvailable ? 'Create encrypted documents with keyhive' : 'Encryption only available on localhost'}>
-          <Switch checked={createSecure} onCheckedChange={setCreateSecure} disabled={!secureAvailable} />
-          <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{createSecure ? 'lock' : 'visibility'}</span>
-          Encrypted
-        </label>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
@@ -453,29 +447,38 @@ export function Home({ path }: { path?: string }) {
             <DropdownMenuItem onSelect={handleCreateDataGrid}>
               <span className="material-symbols-outlined">grid_on</span> Spreadsheet
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <span className="material-symbols-outlined">upload_file</span> Import
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onSelect={() => icsInputRef.current?.click()}>
+                  <span className="material-symbols-outlined">date_range</span> Import .ics
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => xlsInputRef.current?.click()}>
+                  <span className="material-symbols-outlined">grid_on</span> Import .xlsx
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => jsonInputRef.current?.click()}>
+                  <span className="material-symbols-outlined">code</span> Import .json
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); if (secureAvailable) setCreateSecure(v => !v); }}
+              disabled={!secureAvailable}
+              title={secureAvailable ? 'Create encrypted documents with keyhive' : 'Encryption only available on localhost'}
+            >
+              <span className="material-symbols-outlined">{createSecure ? 'check_box' : 'check_box_outline_blank'}</span>
+              <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{createSecure ? 'lock' : 'visibility'}</span>
+              Encrypted
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         <input type="file" ref={icsInputRef} accept=".ics,text/calendar" style={{ display: 'none' }} onChange={handleImportIcs as any} />
         <input type="file" ref={xlsInputRef} accept=".xls,.xlsx,.csv" style={{ display: 'none' }} onChange={handleImportXlsx as any} />
         <input type="file" ref={jsonInputRef} accept=".json,application/json" style={{ display: 'none' }} onChange={handleImportJson as any} />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              <span className="material-symbols-outlined">upload_file</span> Import
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onSelect={() => icsInputRef.current?.click()}>
-              <span className="material-symbols-outlined">date_range</span> Import .ics
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => xlsInputRef.current?.click()}>
-              <span className="material-symbols-outlined">grid_on</span> Import .xlsx
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => jsonInputRef.current?.click()}>
-              <span className="material-symbols-outlined">code</span> Import .json
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <div className="flex flex-col">
