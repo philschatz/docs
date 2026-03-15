@@ -11,6 +11,7 @@
           packages = [
             pkgs.python3
             pkgs.gh
+            pkgs.dig
           ];
         };
       });

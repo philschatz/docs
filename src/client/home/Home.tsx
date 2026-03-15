@@ -431,6 +431,13 @@ export function Home({ path }: { path?: string }) {
             <span className="material-symbols-outlined">date_range</span> All calendars
           </Button>
         </a>
+        {secureAvailable && (
+          <a href="#/settings">
+            <Button variant="outline">
+              <span className="material-symbols-outlined">settings</span> Settings
+            </Button>
+          </a>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
@@ -540,13 +547,6 @@ export function Home({ path }: { path?: string }) {
       </div>
 
       <div className="flex items-center gap-2 mb-2">
-        {secureAvailable && (
-          <a href="#/settings">
-            <Button variant="outline" size="sm">
-              <span className="material-symbols-outlined">settings</span> Settings & Devices
-            </Button>
-          </a>
-        )}
         {installPrompt ? (
           <Button variant="outline" size="sm" onClick={handleInstall}>
             <span className="material-symbols-outlined">install_mobile</span> Add to Homescreen
