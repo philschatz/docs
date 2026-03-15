@@ -6,7 +6,6 @@ import { openDoc, subscribeQuery, updateDoc, queryDoc } from '../worker-api';
 import { getDocEntry } from '../doc-storage';
 import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
-import { deepAssign } from '../../shared/deep-assign';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { toDateStr } from './recurrence';
 import { mapMultiCalToSXEvents, createMultiCalSXCalendar } from './schedule-x';

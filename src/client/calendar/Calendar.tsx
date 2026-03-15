@@ -8,7 +8,6 @@ import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { useAccess } from '../../shared/useAccess';
 import { HistorySlider } from '../../shared/HistorySlider';
-import { deepAssign } from '../../shared/deep-assign';
 import { getDocEntry, updateDocCache } from '../doc-storage';
 import type { CalendarDocument, CalendarEvent } from './schema';
 import { rebuildExpanded, toDateStr } from './recurrence';

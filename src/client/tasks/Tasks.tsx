@@ -8,7 +8,6 @@ import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { useAccess } from '../../shared/useAccess';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { usePresenceLog, PresenceLogTable } from '../../shared/PresenceLog';
-import { deepAssign } from '../../shared/deep-assign';
 import { getDocEntry, updateDocCache } from '../doc-storage';
 import type { TaskDocument, Task } from './schema';
 import { TaskEditor } from './TaskEditor';
