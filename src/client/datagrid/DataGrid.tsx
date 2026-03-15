@@ -1033,6 +1033,10 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
   // Native paste event listener — provides synchronous clipboard data that
   // the async Clipboard API often fails to deliver (permissions, focus loss).
+  // Depends on gridMounted because the datagrid-container div is conditionally
+  // rendered (behind columnDefs.length > 0 && doc2), so tableRef.current is
+  // null on first render. Re-runs once when the grid appears.
+  const gridMounted = !!rawDoc && columnDefs.length > 0;
   useEffect(() => {
     const el = tableRef.current;
     if (!el) return;
@@ -1043,7 +1047,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
     };
     el.addEventListener('paste', handlePaste);
     return () => el.removeEventListener('paste', handlePaste);
-  }, []);
+  }, [gridMounted]);
 
   return (
     <DocLoader docId={docId}>

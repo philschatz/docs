@@ -58,13 +58,14 @@ function initialEntries(): DocEntry[] {
   }));
 }
 
-function applyQueryResult(prev: DocEntry[], docId: string, result: any): DocEntry[] {
+function applyQueryResult(prev: DocEntry[], docId: string, result: any, lastModified?: number): DocEntry[] {
   return prev.map(e => {
     if (e.documentId !== docId) return e;
     const type = (result.type === 'Calendar' || result.type === 'TaskList' || result.type === 'DataGrid')
       ? result.type as DocType : 'unknown';
     const count = result.eventCount || result.taskCount || result.rowCount || null;
-    return { ...e, type, name: result.name || e.name, count, loading: false };
+    const lastUpdated = lastModified ? new Date(lastModified * 1000).toISOString() : e.lastUpdated;
+    return { ...e, type, name: result.name || e.name, count, lastUpdated, loading: false };
   });
 }
 
@@ -83,12 +84,12 @@ export function Home({ path }: { path?: string }) {
     const docIds = docIdKey ? docIdKey.split(',') : [];
     if (docIds.length === 0) return;
     const unsubs = docIds.map(docId =>
-      subscribeQuery(docId, HOME_SUMMARY_QUERY, (result) => {
+      subscribeQuery(docId, HOME_SUMMARY_QUERY, (result, _heads, lastModified) => {
         if (!result) return;
         const type = (result.type === 'Calendar' || result.type === 'TaskList' || result.type === 'DataGrid')
           ? result.type as DocType : 'unknown';
         updateDocCache(docId, { type, name: result.name });
-        setEntries(prev => applyQueryResult(prev, docId, result));
+        setEntries(prev => applyQueryResult(prev, docId, result, lastModified));
       })
     );
     return () => unsubs.forEach(u => u());

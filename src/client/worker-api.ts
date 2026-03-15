@@ -22,7 +22,7 @@ let idCounter = 0;
 const pendingRequests = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
 // Subscription callbacks: subId → callback
-const subscriptionCallbacks = new Map<number, (result: any, heads: string[]) => void>();
+const subscriptionCallbacks = new Map<number, (result: any, heads: string[], lastModified?: number) => void>();
 // Presence callbacks: docId → callback
 const presenceCallbacks = new Map<string, (peers: Record<string, PeerState<PresenceState>>) => void>();
 // Validation callbacks: docId → callback
@@ -41,7 +41,7 @@ function handleWorkerApiMessage(msg: any): boolean {
     const cb = subscriptionCallbacks.get(msg.subId);
     if (cb) {
       if (msg.error) console.warn('[worker-api] sub-result error subId=%d:', msg.subId, msg.error);
-      else cb(msg.result, msg.heads);
+      else cb(msg.result, msg.heads, msg.lastModified);
     }
     return true;
   }
@@ -143,7 +143,7 @@ export function updateDoc(
 export function subscribeQuery(
   docId: string,
   filter: string,
-  onResult: (result: any, heads: string[]) => void,
+  onResult: (result: any, heads: string[], lastModified?: number) => void,
 ): () => void {
   const subId = ++subIdCounter;
   subscriptionCallbacks.set(subId, onResult);

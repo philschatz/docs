@@ -48,7 +48,7 @@ export type WorkerToMain =
   | { type: 'peer-disconnected'; peerCount: number; peers: string[] }
   // New worker-owned doc API responses
   | { type: 'result'; id: number; result?: any; error?: string }
-  | { type: 'sub-result'; subId: number; result: any; heads: string[]; error?: string }
+  | { type: 'sub-result'; subId: number; result: any; heads: string[]; lastModified?: number; error?: string }
   | { type: 'presence-update'; docId: string; peers: Record<string, any> }
   // Document loading progress
   | { type: 'open-doc-progress'; id: number; pct: number; message: string }
@@ -150,10 +150,20 @@ async function pushToSubscriptions(docId: string) {
   }
   const heads: string[] = handle.heads ? handle.heads() : [];
 
+  // Extract last-modified timestamp from the most recent change
+  let lastModified: number | undefined;
+  try {
+    const history = Automerge.getHistory(handle.doc());
+    if (history.length > 0) {
+      const ts = history[history.length - 1].change.time;
+      if (ts) lastModified = ts;
+    }
+  } catch { /* ignore — not critical */ }
+
   for (const [subId, filter] of entry.subscriptions) {
     try {
       const result = await runQuery(filter, activeDoc);
-      (self as any).postMessage({ type: 'sub-result', subId, result, heads } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'sub-result', subId, result, heads, lastModified } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'sub-result', subId, result: null, heads, error: errMsg(err) } satisfies WorkerToMain);
     }
