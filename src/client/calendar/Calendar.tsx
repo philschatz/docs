@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import { subscribeQuery, updateDoc, deepAssign } from '../worker-api';
 import type { PeerState } from '../../shared/automerge';
-import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import { useDocumentHistory } from '../../shared/useDocumentHistory';
 import { useAccess } from '../../shared/useAccess';
 import { HistorySlider } from '../../shared/HistorySlider';
 import { getDocEntry, updateDocCache } from '../doc-storage';
-import type { CalendarDocument, CalendarEvent } from './schema';
-import { rebuildExpanded, toDateStr } from './recurrence';
+import type { CalendarEvent } from './schema';
+import { rebuildExpanded } from './recurrence';
 import { mapToSXEvents, createSXCalendar } from './schedule-x';
 import type { EventLookupMap } from './schedule-x';
 import { initDragDrop } from './drag-drop';
@@ -18,30 +18,11 @@ import { EventEditor } from './EventEditor';
 import { useDocumentValidation } from '../../shared/useDocumentValidation';
 import { ValidationPanel } from '../../shared/ValidationPanel';
 import { DocLoader } from '../../shared/useDocument';
-
-
-interface EditorState {
-  uid: string;
-  event: CalendarEvent;
-  masterEvent: CalendarEvent | null;
-  recurrenceDate: string | null;
-  isNew: boolean;
-}
-
 import { calendarQuery, expandRange } from './calendar-query';
-
-const PATH_PROP_TO_FIELDS: Record<string, string[]> = {
-  title: ['ed-title'],
-  start: ['ed-date', 'ed-time', 'ed-allday'],
-  duration: ['ed-duration'],
-  recurrenceRule: ['ed-freq'],
-  location: ['ed-location'],
-  description: ['ed-desc'],
-};
-
-function generateUid() {
-  return Date.now() + '-' + Math.random().toString(36).substr(2, 9) + '_automerge';
-}
+import { useCalendarEditor } from './useCalendarEditor';
+import { useEventMutations } from './useEventMutations';
+import { usePeerFocusedFields } from './usePeerFocusedFields';
+import { getInitialDateRange, makeSXCallbacks } from './calendar-utils';
 
 export function Calendar({ docId, readOnly }: { docId?: string; readOnly?: boolean; path?: string }) {
   return (
@@ -55,7 +36,6 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
   const [calName, setCalName] = useState('Calendar');
   const [calDesc, setCalDesc] = useState('');
   const [calColor, setCalColor] = useState('#039be5');
-  const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const history = useDocumentHistory(docId);
   const validationErrors = useDocumentValidation(docId);
@@ -74,10 +54,13 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
   const calTZRef = useRef(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
   const presenceCleanupRef = useRef<(() => void) | null>(null);
-  const editorStateRef = useRef(editorState);
-  editorStateRef.current = editorState;
   const titleFocusedRef = useRef(false);
   const descFocusedRef = useRef(false);
+
+  const getEvents = useCallback(() => eventsRef.current, []);
+  const { editorState, setEditorState, openEditor, refreshEditorFromEvents } = useCalendarEditor(getEvents);
+  const mutations = useEventMutations(setEditorState);
+  const peerFocusedFields = usePeerFocusedFields(peerStates, editorState);
 
   const refreshCalendar = useCallback(() => {
     const range = currentRangeRef.current;
@@ -90,64 +73,6 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
     }
   }, []);
 
-  const saveEvent = useCallback((uid: string, eventData: CalendarEvent) => {
-    if (!canEditRef.current || !docId) return;
-    updateDoc(docId, (d, deepAssign, uid, eventData) => {
-      if (!d.events[uid]) {
-        const clean: any = {};
-        for (const key in eventData) {
-          if ((eventData as any)[key] !== undefined) clean[key] = (eventData as any)[key];
-        }
-        d.events[uid] = clean;
-      } else {
-        deepAssign(d.events[uid], eventData);
-      }
-    }, deepAssign, uid, eventData);
-    setEditorState(null);
-  }, [docId]);
-
-  const saveOverride = useCallback((uid: string, recurrenceDate: string, overrideData: any) => {
-    if (!canEditRef.current || !docId) return;
-    updateDoc(docId, (d, deepAssign, uid, recurrenceDate, overrideData) => {
-      if (!d.events[uid].recurrenceOverrides) d.events[uid].recurrenceOverrides = {};
-      if (!d.events[uid].recurrenceOverrides[recurrenceDate]) {
-        d.events[uid].recurrenceOverrides[recurrenceDate] = overrideData;
-      } else {
-        deepAssign(d.events[uid].recurrenceOverrides[recurrenceDate], overrideData);
-      }
-    }, deepAssign, uid, recurrenceDate, overrideData);
-    setEditorState(null);
-  }, [docId]);
-
-  const deleteEvent = useCallback((uid: string) => {
-    if (!canEditRef.current || !docId) return;
-    updateDoc(docId, (d, uid) => { delete d.events[uid]; }, uid);
-    setEditorState(null);
-  }, [docId]);
-
-  const deleteOccurrence = useCallback((uid: string, recurrenceDate: string) => {
-    saveOverride(uid, recurrenceDate, { excluded: true });
-  }, [saveOverride]);
-
-  const openEditor = useCallback((uid: string | null, ev: CalendarEvent | null, defaultDate: string | null, recurrenceDate: string | null) => {
-    const isNew = !uid;
-    const masterEvent = uid ? eventsRef.current[uid] : null;
-
-    if (isNew) {
-      uid = generateUid();
-      const date = defaultDate || toDateStr(new Date());
-      ev = { '@type': 'Event', title: '', start: date, duration: date.includes('T') ? 'PT1H' : 'P1D', timeZone: null };
-    }
-
-    setEditorState({
-      uid: uid!,
-      event: ev!,
-      masterEvent,
-      recurrenceDate,
-      isNew,
-    });
-  }, []);
-
   useEffect(() => {
     if (!editorState) broadcastRef.current?.('focusedField', null);
   }, [editorState]);
@@ -156,65 +81,28 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
     broadcastRef.current?.('focusedField', path);
   }, []);
 
-  const peerFocusedFields = useMemo(() => {
-    const result: Record<string, { color: string; peerId: string }> = {};
-    if (!editorState) return result;
-    for (const peer of Object.values(peerStates)) {
-      const pf = peer.value?.focusedField;
-      if (!pf || pf.length < 3) continue;
-      if (pf[0] !== 'events' || pf[1] !== editorState.uid) continue;
-      const prop = pf[2] as string;
-      const inputIds = PATH_PROP_TO_FIELDS[prop];
-      if (inputIds) {
-        const info = { color: peerColor(peer.peerId), peerId: peer.peerId };
-        for (const id of inputIds) result[id] = info;
-      }
-    }
-    return result;
-  }, [peerStates, editorState]);
-
   useEffect(() => {
     if (!docId) return;
 
     let mounted = true;
 
-    // Initialize SX calendar synchronously (will be populated by subscription)
-    const now = new Date();
-    const initStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const initEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-    currentRangeRef.current = { start: toDateStr(initStart), end: toDateStr(initEnd) };
+    const initRange = getInitialDateRange();
+    currentRangeRef.current = initRange;
+
+    function resubscribe(visibleStart: string, visibleEnd: string) {
+      unsubQueryRef.current?.();
+      const expanded = expandRange(visibleStart, visibleEnd);
+      queryRangeRef.current = expanded;
+      unsubQueryRef.current = subscribeQuery(docId, calendarQuery(expanded.start, expanded.end), onQueryResult);
+    }
 
     const calEl = document.getElementById('sx-cal')!;
-    let lastRangeKey = '';
-    const { calendar, eventsPlugin } = createSXCalendar(calEl, [], calTZRef.current, calColorRef.current, {
-      onEventClick: (event: any) => {
-        const item = eventLookupRef.current[event.id];
-        if (item) openEditor(item.uid, item.ev, null, item.recurrenceDate);
-      },
-      onClickDate: (date: any) => {
-        openEditor(null, null, date.toString(), null);
-      },
-      onClickDateTime: (dateTime: any) => {
-        const dt = new Date(dateTime.toString().substring(0, 19));
-        dt.setMinutes(Math.round(dt.getMinutes() / 30) * 30, 0, 0);
-        const iso = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0')
-          + 'T' + String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0') + ':00';
-        openEditor(null, null, iso, null);
-      },
-      onRangeUpdate: (range: any) => {
-        const start = range.start.toString().substring(0, 10);
-        const end = range.end.toString().substring(0, 10);
-        const key = start + ':' + end;
-        if (key === lastRangeKey) return;
-        lastRangeKey = key;
-        currentRangeRef.current = { start, end };
-        // Resubscribe if the visible range has moved outside the queried range
-        if (start < queryRangeRef.current.start || end > queryRangeRef.current.end) {
-          resubscribe(start, end);
-        }
-        refreshCalendar();
-      },
-    });
+    const { calendar, eventsPlugin } = createSXCalendar(calEl, [], calTZRef.current, calColorRef.current,
+      makeSXCallbacks({
+        eventLookupRef, openEditor, currentRangeRef, queryRangeRef,
+        resubscribe, refreshCalendar,
+      }),
+    );
     calendarRef.current = calendar;
     eventsPluginRef.current = eventsPlugin;
 
@@ -264,31 +152,9 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
       if (!descFocusedRef.current) setCalDesc(result.description || '');
       history.onNewHeads(heads);
       refreshCalendar();
-
-      const es = editorStateRef.current;
-      if (es && !es.isNew) {
-        const fresh = eventsRef.current[es.uid];
-        if (fresh) {
-          setEditorState(prev => {
-            if (!prev || prev.uid !== es.uid) return prev;
-            if (prev.recurrenceDate) return { ...prev, masterEvent: fresh };
-            return { ...prev, event: fresh, masterEvent: fresh };
-          });
-        } else {
-          setEditorState(null);
-        }
-      }
+      refreshEditorFromEvents(eventsRef.current);
     };
 
-    function resubscribe(visibleStart: string, visibleEnd: string) {
-      unsubQueryRef.current?.();
-      const expanded = expandRange(visibleStart, visibleEnd);
-      queryRangeRef.current = expanded;
-      unsubQueryRef.current = subscribeQuery(docId, calendarQuery(expanded.start, expanded.end), onQueryResult);
-    }
-
-    // Initial subscription with the initial range
-    const initRange = currentRangeRef.current;
     resubscribe(initRange.start, initRange.end);
 
     return () => {
@@ -301,7 +167,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
       unsubQueryRef.current?.();
       unsubQueryRef.current = null;
     };
-  }, [docId, openEditor, refreshCalendar]);
+  }, [docId, openEditor, refreshCalendar, refreshEditorFromEvents]);
 
   const peerList = Object.values(peerStates).filter(p => p.value?.viewing);
 
@@ -377,10 +243,22 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         recurrenceDate={editorState?.recurrenceDate || null}
         isNew={editorState?.isNew || false}
         opened={!!editorState}
-        onSave={saveEvent}
-        onSaveOverride={saveOverride}
-        onDelete={deleteEvent}
-        onDeleteOccurrence={deleteOccurrence}
+        onSave={(uid, data) => {
+          if (!canEditRef.current) return;
+          mutations.saveEvent(uid, data, docId);
+        }}
+        onSaveOverride={(uid, recDate, patch) => {
+          if (!canEditRef.current) return;
+          mutations.saveOverride(uid, recDate, patch, docId);
+        }}
+        onDelete={(uid) => {
+          if (!canEditRef.current) return;
+          mutations.deleteEvent(uid, docId);
+        }}
+        onDeleteOccurrence={(uid, recDate) => {
+          if (!canEditRef.current) return;
+          mutations.deleteOccurrence(uid, recDate, docId);
+        }}
         onClose={() => setEditorState(null)}
         onEditAll={(uid) => {
           const master = eventsRef.current[uid];

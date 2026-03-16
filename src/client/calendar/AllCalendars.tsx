@@ -4,17 +4,19 @@ import './calendar.css';
 import type { PeerState } from '../../shared/automerge';
 import { openDoc, subscribeQuery, updateDoc, queryDoc, deepAssign } from '../worker-api';
 import { getDocEntry } from '../doc-storage';
-import { peerColor, initPresence, type PresenceState } from '../../shared/presence';
+import { initPresence, type PresenceState } from '../../shared/presence';
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
-import type { CalendarDocument, CalendarEvent } from './schema';
-import { toDateStr } from './recurrence';
+import type { CalendarEvent } from './schema';
 import { mapMultiCalToSXEvents, createMultiCalSXCalendar } from './schedule-x';
 import type { MultiCalEventLookupMap, CalendarSource } from './schedule-x';
 import { initDragDrop } from './drag-drop';
 import { EventEditor } from './EventEditor';
 import { CalendarSettings } from './CalendarSettings';
-
 import { calendarQuery, expandRange } from './calendar-query';
+import { useCalendarEditor } from './useCalendarEditor';
+import { useEventMutations } from './useEventMutations';
+import { usePeerFocusedFields } from './usePeerFocusedFields';
+import { getInitialDateRange, makeSXCallbacks } from './calendar-utils';
 
 interface LoadedCalendar {
   docId: string;
@@ -23,28 +25,6 @@ interface LoadedCalendar {
   description: string;
   timeZone: string;
   events: Record<string, CalendarEvent>;
-}
-
-interface EditorState {
-  uid: string;
-  event: CalendarEvent;
-  masterEvent: CalendarEvent | null;
-  recurrenceDate: string | null;
-  isNew: boolean;
-  calDocId: string;
-}
-
-const PATH_PROP_TO_FIELDS: Record<string, string[]> = {
-  title: ['ed-title'],
-  start: ['ed-date', 'ed-time', 'ed-allday'],
-  duration: ['ed-duration'],
-  recurrenceRule: ['ed-freq'],
-  location: ['ed-location'],
-  description: ['ed-desc'],
-};
-
-function generateUid() {
-  return Date.now() + '-' + Math.random().toString(36).substr(2, 9) + '_automerge';
 }
 
 function getSavedIds(): string[] {
@@ -60,7 +40,6 @@ const defaultTZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 export function AllCalendars({ path }: { path?: string }) {
   const [calendars, setCalendars] = useState<LoadedCalendar[]>([]);
   const [status, setStatus] = useState('Loading calendars...');
-  const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [settingsDocId, setSettingsDocId] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
 
@@ -71,9 +50,27 @@ export function AllCalendars({ path }: { path?: string }) {
   const queryRangeRef = useRef({ start: '', end: '' });
   const eventsPluginRef = useRef<any>(null);
   const calendarSXRef = useRef<any>(null);
-  const editorStateRef = useRef(editorState);
-  editorStateRef.current = editorState;
   const presenceMapRef = useRef<Map<string, { broadcast: (key: keyof PresenceState, value: any) => void; cleanup: () => void }>>(new Map());
+
+  const findCalendar = useCallback((docId: string) => {
+    return calendarsRef.current.find(c => c.docId === docId) || null;
+  }, []);
+
+  const getEvents = useCallback((calDocId?: string) => {
+    if (calDocId) {
+      const cal = findCalendar(calDocId);
+      return cal ? cal.events : {};
+    }
+    const all: Record<string, CalendarEvent> = {};
+    for (const c of calendarsRef.current) {
+      for (const [k, v] of Object.entries(c.events)) all[k] = v;
+    }
+    return all;
+  }, [findCalendar]);
+
+  const { editorState, setEditorState, editorStateRef, openEditor, refreshEditorFromEvents } = useCalendarEditor(getEvents);
+  const mutations = useEventMutations(setEditorState);
+  const peerFocusedFields = usePeerFocusedFields(peerStates, editorState);
 
   const refreshCalendar = useCallback(() => {
     const range = currentRangeRef.current;
@@ -100,56 +97,12 @@ export function AllCalendars({ path }: { path?: string }) {
     }
   }, []);
 
-  const findCalendar = useCallback((docId: string) => {
-    return calendarsRef.current.find(c => c.docId === docId) || null;
-  }, []);
-
-  const saveEvent = useCallback((uid: string, eventData: CalendarEvent, calDocId: string) => {
-    updateDoc(calDocId, (d: any, deepAssign: any, uid: string, eventData: any) => {
-      if (!d.events[uid]) {
-        const clean: any = {};
-        for (const key in eventData) {
-          if ((eventData as any)[key] !== undefined) clean[key] = (eventData as any)[key];
-        }
-        d.events[uid] = clean;
-      } else {
-        deepAssign(d.events[uid], eventData);
-      }
-    }, deepAssign, uid, eventData);
-    setEditorState(null);
-  }, []);
-
-  const saveOverride = useCallback((uid: string, recurrenceDate: string, overrideData: any, calDocId: string) => {
-    updateDoc(calDocId, (d: any, deepAssign: any, uid: string, recurrenceDate: string, overrideData: any) => {
-      if (!d.events[uid].recurrenceOverrides) d.events[uid].recurrenceOverrides = {};
-      if (!d.events[uid].recurrenceOverrides[recurrenceDate]) {
-        d.events[uid].recurrenceOverrides[recurrenceDate] = overrideData;
-      } else {
-        deepAssign(d.events[uid].recurrenceOverrides[recurrenceDate], overrideData);
-      }
-    }, deepAssign, uid, recurrenceDate, overrideData);
-    setEditorState(null);
-  }, []);
-
-  const deleteEvent = useCallback((uid: string) => {
-    const es = editorStateRef.current;
-    if (!es) return;
-    updateDoc(es.calDocId, (d: any, uid: string) => { delete d.events[uid]; }, uid);
-    setEditorState(null);
-  }, []);
-
-  const deleteOccurrence = useCallback((uid: string, recurrenceDate: string) => {
-    const es = editorStateRef.current;
-    if (!es) return;
-    saveOverride(uid, recurrenceDate, { excluded: true }, es.calDocId);
-  }, [saveOverride]);
-
   const moveEvent = useCallback((uid: string, eventData: CalendarEvent, targetDocId: string) => {
     const es = editorStateRef.current;
     if (!es) return;
 
     // Delete from source
-    updateDoc(es.calDocId, (d: any, uid: string) => { delete d.events[uid]; }, uid);
+    updateDoc(es.calDocId!, (d: any, uid: string) => { delete d.events[uid]; }, uid);
 
     // Create in target with same UID
     updateDoc(targetDocId, (d: any, uid: string, eventData: any) => {
@@ -161,33 +114,12 @@ export function AllCalendars({ path }: { path?: string }) {
     }, uid, eventData);
 
     setEditorState(null);
-  }, []);
+  }, [editorStateRef, setEditorState]);
 
   const activeCalDocId = useMemo(() => {
     if (editorState?.calDocId) return editorState.calDocId;
     return calendars[0]?.docId || '';
   }, [editorState, calendars]);
-
-  const openEditor = useCallback((uid: string | null, ev: CalendarEvent | null, defaultDate: string | null, recurrenceDate: string | null, calDocId: string) => {
-    const isNew = !uid;
-    const cal = findCalendar(calDocId);
-    const masterEvent = uid && cal ? cal.events[uid] : null;
-
-    if (isNew) {
-      uid = generateUid();
-      const date = defaultDate || toDateStr(new Date());
-      ev = { '@type': 'Event', title: '', start: date, duration: date.includes('T') ? 'PT1H' : 'P1D', timeZone: null };
-    }
-
-    setEditorState({
-      uid: uid!,
-      event: ev!,
-      masterEvent,
-      recurrenceDate,
-      isNew,
-      calDocId,
-    });
-  }, [findCalendar]);
 
   // Broadcast presence focus field changes
   useEffect(() => {
@@ -201,28 +133,9 @@ export function AllCalendars({ path }: { path?: string }) {
   const handleFieldFocus = useCallback((path: (string | number)[] | null) => {
     const es = editorStateRef.current;
     if (!es) return;
-    const entry = presenceMapRef.current.get(es.calDocId);
+    const entry = presenceMapRef.current.get(es.calDocId!);
     entry?.broadcast('focusedField', path);
-  }, []);
-
-  const peerFocusedFields = useMemo(() => {
-    const result: Record<string, { color: string; peerId: string }> = {};
-    if (!editorState) return result;
-    for (const peer of Object.values(peerStates)) {
-      const pf = peer.value?.focusedField;
-      if (!pf || pf.length < 3) continue;
-      if (pf[0] !== 'events' || pf[1] !== editorState.uid) continue;
-      const prop = pf[2] as string;
-      const inputIds = PATH_PROP_TO_FIELDS[prop];
-      if (inputIds) {
-        const info = { color: peerColor(peer.peerId), peerId: peer.peerId };
-        for (const id of inputIds) {
-          result[id] = info;
-        }
-      }
-    }
-    return result;
-  }, [peerStates, editorState]);
+  }, [editorStateRef]);
 
   const calendarListForEditor = useMemo(() => {
     return calendars.map(c => ({ docId: c.docId, name: c.name, color: c.color }));
@@ -236,12 +149,9 @@ export function AllCalendars({ path }: { path?: string }) {
     (async () => {
       const allIds = getSavedIds();
 
-      // Compute initial date range for querying
-      const now = new Date();
-      const initStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const initEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-      currentRangeRef.current = { start: toDateStr(initStart), end: toDateStr(initEnd) };
-      const initExpanded = expandRange(toDateStr(initStart), toDateStr(initEnd));
+      const initRange = getInitialDateRange();
+      currentRangeRef.current = initRange;
+      const initExpanded = expandRange(initRange.start, initRange.end);
       queryRangeRef.current = initExpanded;
       const initQuery = calendarQuery(initExpanded.start, initExpanded.end);
 
@@ -286,7 +196,6 @@ export function AllCalendars({ path }: { path?: string }) {
             // Merge peer states from all calendars
             setPeerStates(prev => {
               const next = { ...prev };
-              // Remove old states from this calendar's presence
               for (const key of Object.keys(next)) {
                 if (key.startsWith(cal.docId + ':')) delete next[key];
               }
@@ -313,75 +222,6 @@ export function AllCalendars({ path }: { path?: string }) {
       const { sxEvents, eventLookup, sxCalendars } = mapMultiCalToSXEvents(sources, currentRangeRef.current.start, currentRangeRef.current.end);
       eventLookupRef.current = eventLookup;
 
-      let lastRangeKey = '';
-      const calEl = document.getElementById('sx-cal')!;
-      const { calendar, eventsPlugin } = createMultiCalSXCalendar(calEl, sxEvents, defaultTZ, sxCalendars, {
-        onEventClick: (event: any) => {
-          const item = eventLookupRef.current[event.id];
-          if (item) openEditor(item.uid, item.ev, null, item.recurrenceDate, item.calDocId);
-        },
-        onClickDate: (date: any) => {
-          const firstDocId = calendarsRef.current[0]?.docId;
-          if (firstDocId) openEditor(null, null, date.toString(), null, firstDocId);
-        },
-        onClickDateTime: (dateTime: any) => {
-          const dt = new Date(dateTime.toString().substring(0, 19));
-          dt.setMinutes(Math.round(dt.getMinutes() / 30) * 30, 0, 0);
-          const iso = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0')
-            + 'T' + String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0') + ':00';
-          const firstDocId = calendarsRef.current[0]?.docId;
-          if (firstDocId) openEditor(null, null, iso, null, firstDocId);
-        },
-        onRangeUpdate: (range: any) => {
-          const start = range.start.toString().substring(0, 10);
-          const end = range.end.toString().substring(0, 10);
-          const key = start + ':' + end;
-          if (key === lastRangeKey) return;
-          lastRangeKey = key;
-          currentRangeRef.current = { start, end };
-          // Resubscribe if the visible range has moved outside the queried range
-          if (start < queryRangeRef.current.start || end > queryRangeRef.current.end) {
-            resubscribeAll(start, end);
-          }
-          refreshCalendar();
-        },
-      });
-      calendarSXRef.current = calendar;
-      eventsPluginRef.current = eventsPlugin;
-
-      // Subscribe to changes on each calendar via worker query subscriptions
-      function onCalResult(cal: LoadedCalendar, result: any) {
-        if (!result || !mounted) return;
-        cal.events = result.events || {};
-        cal.name = result.name || 'Untitled';
-        cal.color = result.color || '#039be5';
-        cal.description = result.description || '';
-
-        // Update React state for the header chips
-        setCalendars(prev => prev.map(c =>
-          c.docId === cal.docId ? { ...c, name: cal.name, color: cal.color, description: cal.description, events: cal.events } : c
-        ));
-
-        // Update editor state if currently editing an event from this calendar
-        const es = editorStateRef.current;
-        if (es && !es.isNew && es.calDocId === cal.docId) {
-          const fresh = cal.events[es.uid];
-          if (fresh) {
-            setEditorState(prev => {
-              if (!prev || prev.uid !== es.uid) return prev;
-              if (prev.recurrenceDate) {
-                return { ...prev, masterEvent: fresh };
-              }
-              return { ...prev, event: fresh, masterEvent: fresh };
-            });
-          } else {
-            setEditorState(null);
-          }
-        }
-
-        refreshCalendar();
-      }
-
       function resubscribeAll(visibleStart: string, visibleEnd: string) {
         for (const unsub of unsubscribes) unsub();
         unsubscribes.length = 0;
@@ -394,14 +234,39 @@ export function AllCalendars({ path }: { path?: string }) {
         }
       }
 
-      resubscribeAll(toDateStr(initStart), toDateStr(initEnd));
+      const calEl = document.getElementById('sx-cal')!;
+      const { calendar, eventsPlugin } = createMultiCalSXCalendar(calEl, sxEvents, defaultTZ, sxCalendars,
+        makeSXCallbacks({
+          eventLookupRef, openEditor, currentRangeRef, queryRangeRef,
+          getDefaultCalDocId: () => calendarsRef.current[0]?.docId,
+          resubscribe: resubscribeAll, refreshCalendar,
+        }),
+      );
+      calendarSXRef.current = calendar;
+      eventsPluginRef.current = eventsPlugin;
+
+      function onCalResult(cal: LoadedCalendar, result: any) {
+        if (!result || !mounted) return;
+        cal.events = result.events || {};
+        cal.name = result.name || 'Untitled';
+        cal.color = result.color || '#039be5';
+        cal.description = result.description || '';
+
+        setCalendars(prev => prev.map(c =>
+          c.docId === cal.docId ? { ...c, name: cal.name, color: cal.color, description: cal.description, events: cal.events } : c
+        ));
+
+        refreshEditorFromEvents(cal.events, cal.docId);
+        refreshCalendar();
+      }
+
+      resubscribeAll(initRange.start, initRange.end);
 
       // Set up drag-drop
       initDragDrop(
         calEl,
         () => eventLookupRef.current,
         () => {
-          // Flatten all calendar events into one map (drag-drop only uses it for lookup)
           const all: Record<string, any> = {};
           for (const c of calendarsRef.current) {
             for (const [k, v] of Object.entries(c.events)) all[k] = v;
@@ -437,7 +302,7 @@ export function AllCalendars({ path }: { path?: string }) {
       for (const { cleanup } of presenceMapRef.current.values()) cleanup();
       presenceMapRef.current.clear();
     };
-  }, [openEditor, refreshCalendar, findCalendar]);
+  }, [openEditor, refreshCalendar, findCalendar, refreshEditorFromEvents]);
 
   const settingsCal = settingsDocId ? findCalendar(settingsDocId) : null;
 
@@ -469,15 +334,15 @@ export function AllCalendars({ path }: { path?: string }) {
         recurrenceDate={editorState?.recurrenceDate || null}
         isNew={editorState?.isNew || false}
         opened={!!editorState}
-        onSave={(uid, data) => saveEvent(uid, data, activeCalDocId)}
-        onSaveOverride={(uid, recDate, patch) => saveOverride(uid, recDate, patch, activeCalDocId)}
-        onDelete={deleteEvent}
-        onDeleteOccurrence={deleteOccurrence}
+        onSave={(uid, data) => mutations.saveEvent(uid, data, activeCalDocId)}
+        onSaveOverride={(uid, recDate, patch) => mutations.saveOverride(uid, recDate, patch, activeCalDocId)}
+        onDelete={(uid) => mutations.deleteEvent(uid, activeCalDocId)}
+        onDeleteOccurrence={(uid, recDate) => mutations.deleteOccurrence(uid, recDate, activeCalDocId)}
         onClose={() => setEditorState(null)}
         onEditAll={(uid) => {
           const es = editorStateRef.current;
           if (!es) return;
-          const cal = findCalendar(es.calDocId);
+          const cal = findCalendar(es.calDocId!);
           if (!cal) return;
           const master = cal.events[uid];
           if (master) openEditor(uid, master, null, null, es.calDocId);
