@@ -18,6 +18,7 @@ export function Settings({ path }: { path?: string }) {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);
   const [linkInput, setLinkInput] = useState('');
+  const [inviteUrl, setInviteUrl] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -65,6 +66,17 @@ export function Settings({ path }: { path?: string }) {
 
   const copyContactCard = () => {
     if (contactCard) navigator.clipboard.writeText(contactCard);
+  };
+
+  const handleNavigateUrl = () => {
+    const url = inviteUrl.trim();
+    if (!url) return;
+    const hashIdx = url.indexOf('#');
+    if (hashIdx === -1) {
+      setError('Invalid URL — no hash fragment found.');
+      return;
+    }
+    window.location.hash = url.slice(hashIdx + 1);
   };
 
   return (
@@ -135,6 +147,25 @@ export function Settings({ path }: { path?: string }) {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Navigate to URL */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold mb-2">Open Link</h2>
+        <p className="text-xs text-muted-foreground mb-2">
+          Paste a link to navigate to it (e.g. invite or document links).
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            className="flex-1 text-sm p-2 rounded border border-border font-mono"
+            value={inviteUrl}
+            onInput={(e: any) => setInviteUrl(e.currentTarget.value)}
+            placeholder="Paste URL here..."
+          />
+          <Button size="sm" onClick={handleNavigateUrl} disabled={!inviteUrl.trim()}>
+            Go
+          </Button>
+        </div>
       </section>
 
       {/* Link device */}
