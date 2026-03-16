@@ -353,11 +353,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
   private lastChangeIdByDoc: Map<string, ChangeId> = new Map();
   // Messages that failed decryption (key not yet available) — retried after keyhive sync
   private pendingDecrypt: { message: Message; rawPayload: Uint8Array; automergeDocId: string; retries: number }[] = [];
-  // Maps peer IDs to their keyhive Identifier (from contact card exchange).
-  // keyhiveIdentifierFromPeerId derives Identifier from the signer's verifying key,
-  // but contactCard.id may differ (e.g. WebCrypto signers). This map stores the
-  // authoritative Identifier from the actual contact card.
-  private peerContactCardIds: Map<string, Identifier> = new Map();
 
   // Periodic op cache (only used when cacheHashes=true)
   private opCache: OpCache | null = null;
@@ -464,9 +459,9 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     try { return Array.from(id.toBytes() as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join(''); } catch { return '??'; }
   }
 
-  /** Get the keyhive Identifier for a peer, preferring the contact card mapping. */
+  /** Get the keyhive Identifier for a peer from the verifying key in its peer ID. */
   private identifierForPeer(peerId: PeerId): Identifier {
-    return this.peerContactCardIds.get(peerId) ?? keyhiveIdentifierFromPeerId(peerId);
+    return keyhiveIdentifierFromPeerId(peerId);
   }
 
   connect(peerId: PeerId, peerMetadata?: PeerMetadata): void {
@@ -716,30 +711,15 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       return true;
     }
     try {
-      // Try both identifier sources: contactCard.id may differ from the
-      // verifying-key-derived Identifier used in the delegation chain.
-      // The delegation chain typically uses the signer's verifying key,
-      // but contactCard.id can be a different value (e.g. after archive reload).
-      const contactCardId = this.peerContactCardIds.get(senderId);
-      const peerIdIdentifier = keyhiveIdentifierFromPeerId(senderId);
-      const candidateIds: Identifier[] = contactCardId
-        ? [contactCardId, peerIdIdentifier]
-        : [peerIdIdentifier];
-
-      let access: any = undefined;
-      for (const id of candidateIds) {
-        access = await this.keyhive.accessForDoc(id, khDocId);
-        if (access) break;
-      }
-
+      const senderIdentifier = this.identifierForPeer(senderId);
+      const access = await this.keyhive.accessForDoc(senderIdentifier, khDocId);
       if (!access) {
         // Dump members for debugging
         try {
           const members = await this.keyhive.docMemberCapabilities(khDocId);
-          const ccHex = contactCardId ? KeyhiveNetworkAdapter._idHex(contactCardId) : 'none';
-          const peerHex = KeyhiveNetworkAdapter._idHex(peerIdIdentifier);
+          const idHex = KeyhiveNetworkAdapter._idHex(senderIdentifier);
           console.warn(`[AMRepoKeyhive] No access for peer ${senderId} on doc ${automergeDocId} — blocking sync`);
-          console.warn(`[AMRepoKeyhive]   contactCardId=${ccHex} peerIdIdentifier=${peerHex}`);
+          console.warn(`[AMRepoKeyhive]   senderIdentifier=${idHex}`);
           for (const m of members) {
             const mIdHex = m.who.id ? KeyhiveNetworkAdapter._idHex(m.who.id) : '??';
             console.warn(`[AMRepoKeyhive]   member: ${mIdHex} ${m.can.toString()} (${m.who.isIndividual() ? 'individual' : 'group'})`);
@@ -930,13 +910,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           keyhiveMessageData.contactCard,
           this.keyhiveStorage
         );
-        // Store the authoritative mapping: peer ID → contact card Identifier.
-        // This is needed because keyhiveIdentifierFromPeerId (derived from
-        // signer.verifyingKey) may not match contactCard.id in production
-        // (e.g. with WebCrypto signers after archive reload).
-        const ccId = keyhiveMessageData.contactCard.id;
-        this.peerContactCardIds.set(message.senderId, ccId);
-        console.log(`[AMRepoKeyhive] Stored contactCard mapping: ${message.senderId} → ${KeyhiveNetworkAdapter._idHex(ccId)}`);
       } catch (err) {
         console.error("[AMRepoKeyhive] receiveContactCard failed:", err);
       }
