@@ -210,14 +210,11 @@ export class KeyhiveOps {
     const eventsForUs: Map<Uint8Array, Uint8Array> = await inviteKh.eventsForAgent(ourAgentInInviteKh);
     const eventsArr: Uint8Array[] = [];
     eventsForUs.forEach((v: Uint8Array) => eventsArr.push(v));
-    console.log('[claimInvite] ingesting', eventsArr.length, 'CGKA events');
     await this.kh.ingestEventsBytes(eventsArr);
 
     const khDocId = bytesToBase64(inviteDoc.id.toBytes());
-    console.log('[claimInvite] khDocId:', khDocId.slice(0, 16), 'automergeDocId:', automergeDocId);
     this.inviteAccessOverrides.set(khDocId, inviteAccessStr);
     const docFromOurKh = await this.kh.getDocument(inviteDoc.doc_id);
-    console.log('[claimInvite] getDocument returned:', !!docFromOurKh);
     if (docFromOurKh) {
       this.khDocuments.set(khDocId, docFromOurKh);
     }
@@ -225,7 +222,6 @@ export class KeyhiveOps {
       this.fx.registerDoc(automergeDocId, inviteDoc.doc_id);
     }
     await this.fx.persist();
-    console.log('[claimInvite] persisted, syncing keyhive and forcing resync');
     this.fx.syncKeyhive();
     this.fx.forceResyncAllPeers();
     if (automergeDocId) {
