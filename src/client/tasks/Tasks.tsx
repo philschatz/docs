@@ -218,7 +218,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
     };
   }, [docId]);
 
-  const peerList = Object.values(peerStates).filter(p => p.value.viewing);
+  const peerList = Object.values(peerStates).filter(p => p.value?.viewing);
   const peerEditingTasks = useMemo(() => {
     const result: Record<string, { color: string; peerId: string }> = {};
     for (const peer of Object.values(peerStates)) {

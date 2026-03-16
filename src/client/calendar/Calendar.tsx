@@ -303,7 +303,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
     };
   }, [docId, openEditor, refreshCalendar]);
 
-  const peerList = Object.values(peerStates).filter(p => p.value.viewing);
+  const peerList = Object.values(peerStates).filter(p => p.value?.viewing);
 
   return (
     <div className="calendar-page">

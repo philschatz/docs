@@ -362,7 +362,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
     }, fullPath, value);
   };
 
-  const peerList = Object.values(peerStates).filter(p => p.value.viewing);
+  const peerList = Object.values(peerStates).filter(p => p.value?.viewing);
 
   const handleDownloadJson = useCallback(() => {
     if (!snapshot) return;

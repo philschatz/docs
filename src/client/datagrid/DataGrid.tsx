@@ -987,7 +987,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
     return map;
   }, [formulaRefHighlights, editingCell]);
 
-  const peerList = Object.values(peerStates).filter(p => p.value.viewing);
+  const peerList = Object.values(peerStates).filter(p => p.value?.viewing);
   const doc2 = docRef.current;
   const hf = hfRef.current;
 
