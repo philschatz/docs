@@ -156,7 +156,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
     const result: Record<string, { color: string; peerId: string }> = {};
     if (!editorState) return result;
     for (const peer of Object.values(peerStates)) {
-      const pf = peer.value.focusedField;
+      const pf = peer.value?.focusedField;
       if (!pf || pf.length < 3) continue;
       if (pf[0] !== 'tasks' || pf[1] !== editorState.uid) continue;
       const prop = pf[2] as string;
@@ -222,7 +222,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
   const peerEditingTasks = useMemo(() => {
     const result: Record<string, { color: string; peerId: string }> = {};
     for (const peer of Object.values(peerStates)) {
-      const pf = peer.value.focusedField;
+      const pf = peer.value?.focusedField;
       if (pf && pf[0] === 'tasks' && pf[1]) {
         result[pf[1] as string] = { color: peerColor(peer.peerId), peerId: peer.peerId };
       }
@@ -250,7 +250,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         }}
         docId={docId}
         peers={peerList}
-        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value.focusedField ? ' (editing)' : ''}`}
+        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
         khDocId={getDocEntry(docId!)?.khDocId}

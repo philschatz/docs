@@ -856,7 +856,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const peerCellMap = useMemo(() => {
     const map: Record<string, PeerFieldInfo> = {};
     for (const peer of Object.values(peerStates)) {
-      const pf = peer.value.focusedField;
+      const pf = peer.value?.focusedField;
       if (!pf || pf.length < 4 || pf[0] !== 'sheets' || pf[1] !== currentSheetId || pf[2] !== 'cells') continue;
       const cellKey = String(pf[3]);
       const sep = cellKey.indexOf(':');
