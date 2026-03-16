@@ -2,10 +2,10 @@ import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { useWsStatus, getWorkerPeerId } from './automerge';
 import { peerColor } from './presence';
-import { AccessControl } from '../client/components/AccessControl';
+import { AccessControl } from '../components/AccessControl';
 import { enableSharing, registerSharingGroup, registerDocMapping } from './keyhive-api';
 import { useAccess } from './useAccess';
-import { getDocEntry } from '../client/doc-storage';
+import { getDocEntry } from '../doc-storage';
 
 interface PeerLike {
   peerId: string;
@@ -79,7 +79,7 @@ export function EditorTitleBar<P extends PeerLike>({
   };
 
   return (
-    <div className="flex items-center gap-1.5 px-1 min-h-10 max-w-screen-xl mx-auto w-full overflow-hidden">
+    <div className="flex items-center gap-1.5 px-1 min-h-10 w-full">
       {/* Left side */}
       <a
         href="#/"
@@ -109,32 +109,25 @@ export function EditorTitleBar<P extends PeerLike>({
 
       {/* Right side */}
       <div className="flex items-center gap-1 sm:gap-1.5 ml-auto shrink-0">
-        {peers.filter(p => p.peerId !== getWorkerPeerId()).map(peer => (
-          <div
-            key={peer.peerId}
-            style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, backgroundColor: peerColor(peer.peerId) }}
-            title={peerTitle ? peerTitle(peer) : `Peer ${peer.peerId}`}
-          />
-        ))}
+        {/* Peer dots — clipped to ~4 dots on narrow screens */}
+        <div className="flex items-center gap-1 max-w-[72px] sm:max-w-none overflow-hidden">
+          {peers.filter(p => p.peerId !== getWorkerPeerId()).map(peer => (
+            <div
+              key={peer.peerId}
+              style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, backgroundColor: peerColor(peer.peerId) }}
+              title={peerTitle ? peerTitle(peer) : `Peer ${peer.peerId}`}
+            />
+          ))}
+        </div>
 
         <span
-          className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline"
+          className="text-xs text-muted-foreground whitespace-nowrap"
           title={connected ? `Me: ${getWorkerPeerId()}` : 'Disconnected from server'}
         >
           {connected ? 'Connected' : 'Disconnected'}
         </span>
 
-        {access && (
-          <span
-            className="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground"
-            title={`Access: ${access}`}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-              {access === 'admin' ? 'admin_panel_settings' : access === 'write' ? 'edit' : access === 'read' ? 'visibility' : 'download'}
-            </span>
-          </span>
-        )}
-
+        {/* Sharing / access button (combined) */}
         {khDocId && docId ? (
           <AccessControl
             khDocId={khDocId}
@@ -142,6 +135,7 @@ export function EditorTitleBar<P extends PeerLike>({
             docType={docType}
             sharingGroupId={sharingGroupId}
             onGroupIdChange={(gid) => onSharingEnabled?.(khDocId!, gid)}
+            access={access}
           />
         ) : docId && getDocEntry(docId)?.encrypted && (
           <button
@@ -156,9 +150,10 @@ export function EditorTitleBar<P extends PeerLike>({
           </button>
         )}
 
+        {/* History & source — inline on sm+, collapsed into dropdown on mobile */}
         {onToggleHistory && (
           <button
-            className={`inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground ${historyActive ? 'bg-accent text-accent-foreground' : ''}`}
+            className={`inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground${historyActive ? ' bg-accent text-accent-foreground' : ''}`}
             onClick={onToggleHistory}
             title={historyActive ? 'Close history' : 'Browse history'}
           >
@@ -169,12 +164,13 @@ export function EditorTitleBar<P extends PeerLike>({
         {showSourceLink && docId && (
           <a
             href={`#/source/${docId}`}
-            className="hidden sm:inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground"
             title="Edit Source"
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>code</span>
           </a>
         )}
+
       </div>
     </div>
   );

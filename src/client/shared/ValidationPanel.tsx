@@ -1,4 +1,4 @@
-import type { ValidationError } from './schemas';
+import type { ValidationError } from '../../shared/schemas';
 import { pathToHash } from './path-hash';
 import './validation-panel.css';
 

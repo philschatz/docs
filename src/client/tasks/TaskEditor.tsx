@@ -6,8 +6,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import type { Task } from './schema';
-import { PresenceDot } from '../../shared/presence';
-import type { PeerFieldInfo } from '../../shared/presence';
+import { PresenceDot } from '../shared/presence';
+import type { PeerFieldInfo } from '../shared/presence';
 
 interface TaskEditorProps {
   uid: string;

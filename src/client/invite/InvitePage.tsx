@@ -16,7 +16,7 @@
 import { useState, useCallback } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
 import { addDocId, getDocEntry } from '@/doc-storage';
-import { claimInvite } from '../../shared/keyhive-api';
+import { claimInvite } from '../shared/keyhive-api';
 import { decodeInvitePayload } from './invite-codec';
 
 interface InvitePageProps {

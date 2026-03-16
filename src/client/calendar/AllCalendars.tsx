@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
-import type { PeerState } from '../../shared/automerge';
+import type { PeerState } from '../shared/automerge';
 import { openDoc, subscribeQuery, updateDoc, queryDoc, deepAssign } from '../worker-api';
 import { getDocEntry } from '../doc-storage';
-import { initPresence, type PresenceState } from '../../shared/presence';
-import { EditorTitleBar } from '../../shared/EditorTitleBar';
+import { initPresence, type PresenceState } from '../shared/presence';
+import { EditorTitleBar } from '../shared/EditorTitleBar';
 import type { CalendarEvent } from './schema';
 import { mapMultiCalToSXEvents, createMultiCalSXCalendar } from './schedule-x';
 import type { MultiCalEventLookupMap, CalendarSource } from './schedule-x';

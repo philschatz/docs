@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import { subscribeValidation, type ValidationError } from '../client/worker-api';
+import { subscribeValidation, type ValidationError } from '../worker-api';
 
 export type { ValidationError };
 

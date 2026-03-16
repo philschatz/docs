@@ -5,9 +5,9 @@ export * as Automerge from '@automerge/automerge';
 export { Presence } from '@automerge/automerge-repo';
 export type { DocHandle, DocumentId, PeerId } from '@automerge/automerge-repo';
 export type { PeerState, PresenceState } from '@automerge/automerge-repo';
-import type { WorkerToMain } from '../client/automerge-worker';
+import type { WorkerToMain } from '../automerge-worker';
 import { initKeyhiveApi, handleKeyhiveResponse, getMyAccess, registerDocMapping } from './keyhive-api';
-import { getDocEntry, getDocList } from '../client/doc-storage';
+import { getDocEntry, getDocList } from '../doc-storage';
 
 // --- Worker setup ---
 
@@ -20,7 +20,7 @@ export function registerWorkerMessageHandler(fn: (msg: any) => boolean): void {
 }
 
 const worker = new Worker(
-  new URL('../client/automerge-worker.ts', import.meta.url),
+  new URL('../automerge-worker.ts', import.meta.url),
   { type: 'module' },
 );
 

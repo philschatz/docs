@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
-import { useConnectionStatus, usePeerList } from '../../shared/automerge';
+import { useConnectionStatus, usePeerList } from '../shared/automerge';
 import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
-import { peerColor } from '../../shared/presence';
+import { peerColor } from '../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
@@ -343,7 +343,7 @@ export function Home({ path }: { path?: string }) {
     if (icsInputRef.current) icsInputRef.current.value = '';
     try {
       const text = await file.text();
-      const { icsToEvent } = await import('../../shared/ics-parser');
+      const { icsToEvent } = await import('../shared/ics-parser');
       const parsed = icsToEvent(text);
       const calName = file.name.replace(/\.ics$/i, '') || 'Imported';
       const events: Record<string, any> = {};

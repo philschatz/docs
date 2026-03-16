@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
-import { openDoc } from '../client/worker-api';
-import { addDocId, getDocEntry } from '../client/doc-storage';
-import { Progress } from '../client/components/ui/progress';
+import { openDoc } from '../worker-api';
+import { addDocId, getDocEntry } from '../doc-storage';
+import { Progress } from '../components/ui/progress';
 
 export type DocStatus = 'loading' | 'ready' | 'error';
 

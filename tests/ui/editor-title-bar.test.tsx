@@ -1,17 +1,17 @@
 import { render, screen, fireEvent } from '@testing-library/preact';
 
 // Mock automerge module before importing EditorTitleBar
-jest.mock('../../src/shared/automerge', () => ({
+jest.mock('../../src/client/shared/automerge', () => ({
   useWsStatus: jest.fn(() => true),
   getWorkerPeerId: jest.fn(() => 'self-peer-id'),
   repo: { peerId: 'self-peer-id' },
 }));
 
-jest.mock('../../src/shared/presence', () => ({
+jest.mock('../../src/client/shared/presence', () => ({
   peerColor: (id: string) => `#${id.slice(0, 6)}`,
 }));
 
-jest.mock('../../src/shared/keyhive-api', () => ({
+jest.mock('../../src/client/shared/keyhive-api', () => ({
   initKeyhiveApi: jest.fn(),
   handleKeyhiveResponse: jest.fn(),
   getDocMembers: jest.fn(() => Promise.resolve([])),
@@ -27,8 +27,23 @@ jest.mock('../../src/client/components/AccessControl', () => ({
   AccessControl: () => null,
 }));
 
-import { EditorTitleBar } from '../../src/shared/EditorTitleBar';
-import { useWsStatus } from '../../src/shared/automerge';
+jest.mock('../../src/client/shared/useAccess', () => ({
+  useAccess: () => ({ canEdit: true }),
+}));
+
+jest.mock('../../src/client/doc-storage', () => ({
+  getDocEntry: () => undefined,
+}));
+
+jest.mock('../../src/client/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: any) => children,
+  DropdownMenuTrigger: ({ children }: any) => children,
+  DropdownMenuContent: () => null,
+  DropdownMenuItem: () => null,
+}));
+
+import { EditorTitleBar } from '../../src/client/shared/EditorTitleBar';
+import { useWsStatus } from '../../src/client/shared/automerge';
 
 const mockUseConnectionStatus = useWsStatus as jest.Mock;
 

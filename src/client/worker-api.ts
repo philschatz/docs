@@ -3,9 +3,9 @@
  * Query is the only read path — the full document is never sent to the browser.
  */
 
-import { workerReady, _worker, registerWorkerMessageHandler } from '../shared/automerge';
-import type { PresenceState } from '../shared/presence';
-import type { PeerState } from '../shared/automerge';
+import { workerReady, _worker, registerWorkerMessageHandler } from './shared/automerge';
+import type { PresenceState } from './shared/presence';
+import type { PeerState } from './shared/automerge';
 import type { ValidationError } from './automerge-worker';
 import { deepAssign } from '../shared/deep-assign';
 

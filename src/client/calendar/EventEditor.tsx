@@ -7,8 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import type { CalendarEvent } from './schema';
-import { PresenceDot } from '../../shared/presence';
-import type { PeerFieldInfo } from '../../shared/presence';
+import { PresenceDot } from '../shared/presence';
+import type { PeerFieldInfo } from '../shared/presence';
 import { isAllDay } from './recurrence';
 
 interface EventEditorProps {

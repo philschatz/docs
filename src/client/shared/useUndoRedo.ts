@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'preact/hooks';
-import { getDocHistory, restoreDocToVersion } from '../client/worker-api';
+import { getDocHistory, restoreDocToVersion } from '../worker-api';
 
-export { toPlain, syncToTarget } from './sync-to-target';
+export { toPlain, syncToTarget } from '../../shared/sync-to-target';
 
 /**
  * History-based undo/redo.

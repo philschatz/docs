@@ -1,4 +1,4 @@
-import { subscribePresence, setPresence } from '../client/worker-api';
+import { subscribePresence, setPresence } from '../worker-api';
 import type { PeerState } from './automerge';
 
 const PEER_COLORS = [

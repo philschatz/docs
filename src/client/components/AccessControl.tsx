@@ -16,7 +16,7 @@ import {
   revokeMember,
   generateInvite,
   type MemberInfo,
-} from '../../shared/keyhive-api';
+} from '../shared/keyhive-api';
 import {
   getInviteRecords,
   addInviteRecord,
@@ -80,6 +80,8 @@ interface AccessControlProps {
   sharingGroupId?: string;
   /** Called when group ID changes (e.g. recreated after reload). */
   onGroupIdChange?: (groupId: string) => void;
+  /** Current access level — shown as icon on the trigger button. */
+  access?: string | null;
 }
 
 interface InviteStatus {
@@ -88,7 +90,17 @@ interface InviteStatus {
   acceptedBy?: MemberInfo;
 }
 
-export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroupIdChange }: AccessControlProps) {
+function accessIcon(access: string | null | undefined): string {
+  if (!access) return 'share';
+  switch (access) {
+    case 'admin': return 'admin_panel_settings';
+    case 'write': return 'edit';
+    case 'read': return 'visibility';
+    default: return 'share';
+  }
+}
+
+export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroupIdChange, access: accessProp }: AccessControlProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
@@ -225,10 +237,10 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
     <>
       <button
         className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground"
-        title="Share & permissions"
+        title={accessProp ? `${accessProp} · Share & permissions` : 'Share & permissions'}
         onClick={() => setOpen(true)}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>share</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{accessIcon(accessProp)}</span>
       </button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent>

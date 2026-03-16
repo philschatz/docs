@@ -1,6 +1,6 @@
 import { useMemo } from 'preact/hooks';
-import type { PeerState } from '../../shared/automerge';
-import { peerColor, type PresenceState } from '../../shared/presence';
+import type { PeerState } from '../shared/automerge';
+import { peerColor, type PresenceState } from '../shared/presence';
 import { PATH_PROP_TO_FIELDS, type EditorState } from './calendar-utils';
 
 export function usePeerFocusedFields(

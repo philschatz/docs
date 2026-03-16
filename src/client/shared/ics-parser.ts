@@ -3,7 +3,7 @@ import type {
   CalendarEvent,
   RecurrenceRule,
   NDay,
-} from './schemas'
+} from '../../shared/schemas'
 import type {
   PatchObject,
   Participant,
@@ -14,7 +14,7 @@ import type {
   Duration,
   UTCDateTime,
   LocalDateTime,
-} from './schemas/core'
+} from '../../shared/schemas/core'
 
 function ensureString<T>(v: T): string | undefined {
   if (v === undefined || v === null) return undefined

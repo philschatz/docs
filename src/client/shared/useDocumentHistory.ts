@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'preact/hooks';
-import { getDocHistory, setDocVersion, restoreDocToVersion } from '../client/worker-api';
+import { getDocHistory, setDocVersion, restoreDocToVersion } from '../worker-api';
 
 export interface DocumentHistory {
   /** Whether history mode is active */

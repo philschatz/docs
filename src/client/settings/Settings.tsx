@@ -12,7 +12,7 @@ import {
   listDevices,
   type IdentityInfo,
   type DeviceInfo,
-} from '../../shared/keyhive-api';
+} from '../shared/keyhive-api';
 export function Settings({ path }: { path?: string }) {
   const [identity, setIdentity] = useState<IdentityInfo | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
