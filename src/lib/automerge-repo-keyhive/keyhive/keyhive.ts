@@ -24,10 +24,6 @@ import { PromiseQueue } from "../network-adapter/pending";
 import { KeyhiveEventEmitter } from "./emitter";
 import { AutomergeRepoKeyhive, keyhiveIdFactory } from "./automerge-repo-keyhive";
 
-/** Set to true to enable verbose debug logging in keyhive storage/init. */
-let KH_DEBUG = false;
-function debug(...args: any[]) { if (KH_DEBUG) console.log('[AMRepoKeyhive]', ...args); }
-
 export const KEYHIVE_DB_KEY = "keyhive-db";
 export const KEYHIVE_ARCHIVES_KEY = "/archives/";
 export const KEYHIVE_EVENTS_KEY = "/ops/";
@@ -121,9 +117,6 @@ export async function initializeAutomergeRepoKeyhive(options: {
 
     emitter.on("update", (event: KeyhiveEvent) => {
       void keyhiveQueue.run(async () => {
-        debug(
-          "[AMRepoKeyhive] Keyhive updated. Saving event."
-        );
         // Always save events to ops/ so the sidecar can pick them up.
         await keyhiveStorage.saveEventWithHash(event);
 
@@ -169,7 +162,6 @@ export async function receiveContactCard(keyhive: Keyhive, contactCard: ContactC
     return await keyhive.getIndividual(contactCard.individualId);
   } else {
     if (contactCard.op) {
-      debug(`[AMRepoKeyhive] Saving Contact Card event: ${contactCard.op}`);
       keyhiveStorage.saveEventWithHash(contactCard.op);
     } else {
       console.error(`[AMRepoKeyhive] No op found for ${contactCard.toJson()}`);
@@ -205,7 +197,6 @@ export class KeyhiveStorage {
   async saveKeyhiveWithHash(kh: Keyhive) {
     const khBytes = (await kh.toArchive()).toBytes();
     const hash = uint8ArrayToHex(this.keyhiveStorageId);
-    debug(`[AMRepoKeyhive] Saving keyhive archive. Hash: ${hash}`);
     await this.storage.save(
       [KEYHIVE_DB_KEY, KEYHIVE_ARCHIVES_KEY, hash],
       khBytes
@@ -247,20 +238,12 @@ export class KeyhiveStorage {
       return;
     }
 
-    debug(
-      `[AMRepoKeyhive] Compacting: ${keyhiveArchiveChunks.length} archives, ${keyhiveEventsChunks.length} events`
-    );
-
     // Ingest all archives
     for (const chunk of keyhiveArchiveChunks) {
       if (chunk.data) {
         try {
           await kh.ingestArchive(new Archive(chunk.data));
         } catch (error) {
-          debug(
-            `Failed to ingest archive during compaction:`,
-            error
-          );
         }
       }
     }
@@ -285,10 +268,6 @@ export class KeyhiveStorage {
           .map((bytes: Uint8Array) => dataToKey.get(bytes))
           .filter((key): key is StorageKey => key !== undefined);
       } catch (error) {
-        debug(
-          `Failed to ingest events during compaction:`,
-          error
-        );
       }
     }
 
@@ -316,9 +295,6 @@ export class KeyhiveStorage {
       }
     }
 
-    debug(
-      `[AMRepoKeyhive] Compaction complete. ${pendingKeys.length} pending events retained.`
-    );
   }
 
   async ingestKeyhiveFromStorage(kh: Keyhive): Promise<void> {
@@ -334,16 +310,9 @@ export class KeyhiveStorage {
     // Ingest all archives
     for (const chunk of keyhiveArchiveChunks) {
       if (chunk.data) {
-        debug(
-          `[AMRepoKeyhive] Ingesting archive from storage. Hash: ${chunk.key[2]}`
-        );
         try {
           await kh.ingestArchive(new Archive(chunk.data));
         } catch (error) {
-          debug(
-            `Failed to re-ingest archive during recovery:`,
-            error
-          );
         }
       }
     }
@@ -354,20 +323,11 @@ export class KeyhiveStorage {
       .filter((data): data is Uint8Array => data !== undefined);
 
     if (eventsBytes.length > 0) {
-      debug(
-        `[AMRepoKeyhive] Ingesting ${eventsBytes.length} events from storage`
-      );
       try {
         await kh.ingestEventsBytes(eventsBytes);
       } catch (error) {
-        debug(
-          `Failed to ingest events during recovery:`,
-          error
-        );
       }
     }
-
-    debug("[AMRepoKeyhive] Reading from storage completed");
   }
 
   async loadOrCreateKeyhive(
@@ -401,12 +361,8 @@ export class KeyhiveStorage {
       if (firstChunk.data) {
         const firstArchive = new Archive(firstChunk.data);
         try {
-          debug("Attempting to load Keyhive archive");
           let store = CiphertextStore.newInMemory();
           const chunk_count = keyhiveArchiveChunks.length;
-          debug(
-            `Ingesting archive from storage (1 of ${chunk_count}). Hash: ${firstChunk.key[2]}`
-          );
 
           const kh = await firstArchive.tryToKeyhive(
             store,
@@ -418,17 +374,11 @@ export class KeyhiveStorage {
           for (let idx = 1; idx < keyhiveArchiveChunks.length; idx++) {
             const chunk = keyhiveArchiveChunks[idx];
             if (chunk.data) {
-              debug(
-                `Ingesting archive from storage (${idx + 1} of ${chunk_count}). Hash: ${chunk.key[2]}`
-              );
               await kh.ingestArchive(new Archive(chunk.data));
             }
           }
 
           // Ingest individual events
-          debug(
-            `Ingesting ${eventsBytes.length} keyhive events from storage.`
-          );
           let pendingKeys: StorageKey[] = [];
           if (eventsBytes.length > 0) {
             pendingKeys = (await kh.ingestEventsBytes(eventsBytes))
@@ -436,7 +386,6 @@ export class KeyhiveStorage {
               .filter((key): key is StorageKey => key !== undefined);
           }
 
-          debug("Successfully loaded Keyhive from archive");
           await this.saveKeyhiveWithHash(kh);
           const currentHash = uint8ArrayToHex(this.keyhiveStorageId);
           for (const chunk of keyhiveArchiveChunks) {
@@ -473,13 +422,9 @@ export class KeyhiveStorage {
 
     // No archives in storage. Create new keyhive
     const store = CiphertextStore.newInMemory();
-    debug(`Initializing new Keyhive`);
     const kh = await Keyhive.init(signer, store, event_handler);
 
     if (eventsBytes.length > 0) {
-      debug(
-        `Ingesting ${eventsBytes.length} keyhive events from storage.`
-      );
       try {
         const pendingKeys = (await kh.ingestEventsBytes(eventsBytes))
           .map((bytes: Uint8Array) => data_to_key.get(bytes))

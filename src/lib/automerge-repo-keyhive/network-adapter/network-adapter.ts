@@ -37,9 +37,6 @@ import {
   receiveContactCard,
 } from "../keyhive/keyhive";
 
-/** Set to true to enable verbose debug logging in the keyhive network adapter. */
-let KH_DEBUG = false;
-function debug(...args: any[]) { if (KH_DEBUG) console.log('[AMRepoKeyhive]', ...args); }
 
 // Map from hash string to hash bytes
 type PeerHashes = Map<string, Uint8Array>;
@@ -171,32 +168,6 @@ class Metrics {
   }
 
   logReport(label: string) {
-    if (!this.hasActivity()) return;
-    const countsStr = Object.entries(this.msgTypeCounts)
-      .map(([type, count]) => `${type}=${count}`)
-      .join(", ");
-    debug(
-      `[${label}] ${this.messageCount} keyhive messages from ${this.uniqueSenders.size} peers at ${new Date().toLocaleTimeString("en-GB")}. ` +
-      `${this.droppedSyncRequests} duplicate sync requests dropped. ` +
-      `${this.nonKeyhiveCount} non-keyhive messages. ` +
-      `Breakdown: ${countsStr}. Total payload: ${this.totalPayloadBytes} bytes. ` +
-      `Processing: ${this.totalProcessingTimeMs}ms. ` +
-      `Public lookups: ${this.publicHashCount} hashes, ${this.publicEventCount} events`
-    );
-    const perTypeStr = Object.entries(this.processingTimeByType)
-      .map(([type, ms]) => `${type}=${ms}ms`)
-      .join(", ");
-    debug(
-      `[${label}+] Per-type: ${perTypeStr}. ` +
-      `Lookups: hash=${this.hashLookupTimeMs}ms, event=${this.eventLookupTimeMs}ms. ` +
-      `Cache: ${this.cacheHits}/${this.cacheMisses} hit/miss. ` +
-      `Queue wait: ${this.totalQueueWaitMs}ms. ` +
-      `Ingestion: ${this.ingestCount}x, ${this.eventsIngested} events, ${this.pendingAfterIngest} pending, ${this.storageRetries} retries. ` +
-      `Ops: ${this.opsSent} sent, ${this.opsRequested} requested. ` +
-      `Sync checks: ${this.syncChecksSent} sent, ${this.syncChecksReceived} rcvd, ${this.syncChecksShortCircuited} short-circuited, ${this.syncChecksFallback} fallback. ` +
-      `Confirmations: ${this.syncConfirmationsSent} sent, ${this.syncConfirmationsReceived} rcvd. ` +
-      `Total ops: ${this.totalOps}`
-    );
   }
 
   reset() {
@@ -414,10 +385,8 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
 
     networkAdapter.on("peer-candidate", (payload) => {
       if (this.peerId && payload.peerId == this.peerId) {
-        debug(`Received peer-candidate msg with our own peerID`);
         return;
       }
-      debug(`[AMRepoKeyhive] peer-candidate: ${payload.peerId}`);
       this.emit("peer-candidate", payload);
       this.peers.set(payload.peerId, new Peer());
     });
@@ -465,7 +434,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
   }
 
   connect(peerId: PeerId, peerMetadata?: PeerMetadata): void {
-    debug(`this.peerId: ${peerId}`);
     this.peerId = peerId;
     this.peerMetadata = peerMetadata;
     this.networkAdapter.connect(peerId, peerMetadata);
@@ -519,7 +487,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
    */
   forceResyncAllPeers(): void {
     this.docObjects.clear();
-    debug(`forceResyncAllPeers: cycling disconnect/reconnect for ${this.peers.size} peers`);
     for (const [peerId, peer] of this.peers) {
       // Reset keyhiveSynced so outgoing sync messages are unencrypted until
       // the next keyhive sync confirmation. This prevents the deadlock where
@@ -535,7 +502,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
   // Register a mapping from automerge DocumentId to keyhive DocumentId.
   // Call this after enabling sharing on a document.
   registerDoc(automergeDocId: string, khDocId: KeyhiveDocumentId): void {
-    debug(`registerDoc: ${automergeDocId} → keyhive doc`);
     this.docMap.set(automergeDocId, khDocId);
     // Eagerly prime the Document object cache so the first encrypt doesn't stall
     void this.getOrFetchDocument(automergeDocId);
@@ -635,7 +601,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         data.length > 0 &&
         peerReady;
       if (automergeDocId && (message.type === "sync" || message.type === "change")) {
-        debug(`SYNC-SEND: ${message.type} doc=${automergeDocId} target=${(message as any).targetId ?? 'n/a'} shouldEncrypt=${shouldEncrypt} dataLen=${data.length}`);
       }
       let hashBuf: ArrayBuffer | undefined;
       if (shouldEncrypt) {
@@ -673,7 +638,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               payload = new Uint8Array(1 + encBytes.length);
               payload[0] = ENC_ENCRYPTED;
               payload.set(encBytes, 1);
-              debug(`Encrypted outgoing ${message.type} for doc ${automergeDocId}, updateOp=${result.update_op()}`);
             } catch (e) {
               console.error(`[AMRepoKeyhive] encryptPayload failed for doc ${automergeDocId}:`, e);
             }
@@ -749,26 +713,18 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.peerHasWriteAccess(message.senderId, docId)
     );
     if (hasAccess) {
-      debug(`ACCESS-OK: emitting ${message.type} from ${message.senderId} for doc ${docId}`);
       this.emit("message", message);
     } else {
       console.warn(`[AMRepoKeyhive] DROPPED sync message from ${message.senderId} for doc ${docId} (insufficient access)`);
     }
   }
 
-  private _rcvCount = 0;
   receiveMessage(message: Message): void {
-    if (KH_DEBUG && (++this._rcvCount <= 20 || this._rcvCount % 50 === 0)) {
-      debug(`receiveMessage #${this._rcvCount}: type=${message.type} from=${message.senderId} doc=${(message as any).documentId ?? 'n/a'}`);
-    }
     try {
       if (
         this.hardcodedRemoteId &&
         message.senderId !== this.hardcodedRemoteId
       ) {
-        debug(
-          `Unknown remote peer ${message.senderId}. Ignoring message!`
-        );
         return;
       }
       if (!("data" in message) || message.data === undefined) {
@@ -798,21 +754,16 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               const automergeDocId = (message as any).documentId as string | undefined;
               const isEncrypted = rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_ENCRYPTED;
               const inDocMap = automergeDocId ? this.docMap.has(automergeDocId) : false;
-              if (KH_DEBUG && automergeDocId && (message.type === "sync" || message.type === "change")) {
-                debug(`SYNC-RCV: ${message.type} from=${message.senderId} doc=${automergeDocId} encrypted=${isEncrypted} inDocMap=${inDocMap} pendingDecrypt=${this.pendingDecrypt.length}`);
-              }
               if (automergeDocId && inDocMap &&
                   (message.type === "sync" || message.type === "change") &&
                   isEncrypted) {
                 // Decrypt inside the queue to prevent concurrent WASM access
                 void this.keyhiveQueue.run(async () => {
-                  debug(`DECRYPT-TASK: starting for doc=${automergeDocId} type=${message.type} from=${message.senderId}`);
                   try {
                     let doc = this.docObjects.get(automergeDocId);
                     if (!doc) {
                       // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
                       const khDocId = this.docMap.get(automergeDocId);
-                      debug(`DECRYPT-TASK: cache miss, khDocId=${khDocId}`);
                       if (khDocId) {
                         const fetched = await this.keyhive.getDocument(khDocId);
                         if (fetched) {
@@ -833,7 +784,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                         return;
                       }
                       message.data = decrypted;
-                      debug(`Decrypted ${message.type} for doc ${automergeDocId}`);
                       if (message.type === "sync" || message.type === "request") {
                         void this.checkAccessAndEmit(message);
                       } else {
@@ -889,7 +839,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         // Peer has a keyhive-looking ID but its message isn't keyhive-signed
         // (e.g. relay server whose peerId prefix happens to decode as 32 bytes).
         // Treat the same as a non-keyhive peer — pass through as-is.
-        debug(`[AMRepoKeyhive] Non-keyhive-signed message from ${message.senderId} type=${message.type}, passing through`);
         this.emit("message", message);
       }
     } catch (e) {
@@ -965,9 +914,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     }
     await this.keyhiveQueue.run(async () => {
       if (attemptRecovery) {
-        debug(
-          "[AMRepoKeyhive] Preparing for keyhive sync. Reading from storage"
-        );
         try {
           const statsBefore = await this.keyhive.stats();
           await this.keyhiveStorage.ingestKeyhiveFromStorage(this.keyhive);
@@ -993,11 +939,9 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       // Get contact card once for all peers if needed, to avoid multiple rotations
       let maybeContactCard: ContactCard | undefined;
       if (includeContactCard) {
-        debug("[AMRepoKeyhive] Including Contact Card in sync message.")
         maybeContactCard = this.contactCard;
       }
 
-      debug(`[AMRepoKeyhive] Syncing with ${this.peers.size} peers`);
       for (const targetId of this.peers.keys()) {
         if (targetId == senderId || targetId == this.peerId!) {
           continue;
@@ -1006,7 +950,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           continue; // Skip non-keyhive peers (e.g. relay server)
         }
         if (!this.readyToSendKeyhiveRequest(targetId)) {
-          debug(`[AMRepoKeyhive] Attempted to send keyhive sync request to ${targetId} too soon. Ignoring.`);
           continue;
         }
 
@@ -1014,7 +957,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         const targetKeyhiveId = this.identifierForPeer(targetId);
         const targetAgent = await this.keyhive.getAgent(targetKeyhiveId);
         if (!targetAgent) {
-          debug(`[AMRepoKeyhive] Requesting ContactCard from ${targetId}`);
           if (!maybeContactCard) {
             maybeContactCard = this.contactCard;
           }
@@ -1053,9 +995,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                 }
               }
             }
-            debug(
-              `[AMRepoKeyhive] Sending keyhive sync check to ${targetId} from ${senderId}: myTotal=${myTotal}, beliefOfTheirTotal=${peer.beliefCounts.theirTotalForMe}`
-            );
             this.streamingMetrics.recordSyncCheckSent();
             this.send(message, maybeContactCard);
           } else {
@@ -1113,15 +1052,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     const peerFoundHashes: Uint8Array[] = requestData.found || [];
     const peerPendingHashes: Uint8Array[] = requestData.pending || [];
 
-    debug(
-      `[AMRepoKeyhive] Received keyhive sync request from ${message.senderId} with ${peerFoundHashes.length} found hashes, ${peerPendingHashes.length} pending hashes`
-    );
 
     const queueEnterTime = Date.now();
     await this.keyhiveQueue.run(async () => {
       metrics.recordQueueWait(Date.now() - queueEnterTime);
       if (!this.readyToSendKeyhiveResponse(message.senderId)) {
-        debug(`[AMRepoKeyhive] Received next keyhive sync request too soon from ${message.senderId}. Ignoring.`);
         return;
       }
 
@@ -1129,9 +1064,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       const senderKeyhiveId = this.identifierForPeer(message.senderId);
       const senderAgent = await this.keyhive.getAgent(senderKeyhiveId);
       if (!senderAgent) {
-        debug(
-          `[AMRepoKeyhive] No agent found for ${message.senderId}, sending keyhive-sync-missing-contact-card`
-        );
         const response = {
           type: "keyhive-sync-request-contact-card",
           senderId: peerId,
@@ -1142,9 +1074,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         // Agent is known — use cache for hashes (may be empty if cache hasn't caught up)
         const localHashes = await this.getHashesForPeerPair(peerId, message.senderId, metrics);
         const pendingOpHashes = await this.getCachedPendingOpHashes(metrics);
-        debug(
-          `[AMRepoKeyhive] asyncSendKeyhiveSyncResponse: Found ${localHashes.size} total local operation hashes for ${message.senderId} and ${pendingOpHashes.length} total pending hashes`
-        );
 
         // Build map to look up peer found hashes by string
         const peerFoundByHashString = new Map<string, Uint8Array>();
@@ -1186,10 +1115,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         metrics.recordOpsSent(foundResult.events.length);
         metrics.recordOpsRequested(requested.length);
 
-        debug(
-          `[AMRepoKeyhive] Found ${foundResult.events.length} ops to send to and ${requested.length} ops to request from ${message.senderId}`
-        );
-        debug(`sync-response: sending=${foundResult.events.length} requesting=${requested.length} peer=${message.senderId.slice(0,20)}`);
 
         // Metadata for belief tracking
         const senderTotal = localHashes.size + pendingOpHashes.length;
@@ -1201,9 +1126,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           targetId: message.senderId,
           data,
         };
-        debug(
-          `[AMRepoKeyhive] Sending keyhive sync response to ${message.senderId} from ${peerId}`
-        );
         this.send(response);
       }
       const peer = this.peers.get(message.senderId);
@@ -1238,17 +1160,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     const responseSenderTotal: number | undefined = responseData.senderTotal;
     const responseReceiverTotal: number | undefined = responseData.receiverTotal;
 
-    debug(
-      `[AMRepoKeyhive] Received keyhive sync response from ${message.senderId}: ${foundEvents.length} ops found, ${requestedHashes.length} ops requested`
-    );
 
     const queueEnterTime = Date.now();
     await this.keyhiveQueue.run(async () => {
       metrics.recordQueueWait(Date.now() - queueEnterTime);
       if (foundEvents.length > 0) {
-        debug(
-          `[AMRepoKeyhive] Ingesting ${foundEvents.length} keyhive events from ${message.senderId}`
-        );
 
         try {
           let pendingEvents: any[] | null = null;
@@ -1270,9 +1186,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           // browser).
           if (!pendingEvents || pendingEvents.length > 0) {
             if (pendingEvents) {
-              debug(
-                `${pendingEvents.length} events stuck in pending${this.retryPendingFromStorage ? ". Reading from storage" : ""}`
-              );
             }
             if (this.retryPendingFromStorage) {
               metrics.recordStorageRetry();
@@ -1281,13 +1194,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                 const retryPending =
                   await this.keyhive.ingestEventsBytes(foundEvents);
                 if (retryPending.length === 0) {
-                  debug(
-                    `Successfully ingested all events after reading from storage`
-                  );
                 } else {
-                  debug(
-                    `Still have ${retryPending.length} pending events after reading from storage`
-                  );
                 }
               } catch (storageError) {
                 console.error(
@@ -1315,19 +1222,16 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               if (hashes.length !== events.size) {
                 console.error(`[BUG1] STALE after sync-response ingest! eventHashesForAgent=${hashes.length} but eventsForAgent=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
               } else {
-                debug(`[BUG1] OK after sync-response ingest: hashes=${hashes.length}, events=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
               }
             }
           }
           if (statsAfterIngest.totalOps !== this.lastKnownTotalOps) {
-            debug(`ingest-remote (sync-response): totalOps changed ${this.lastKnownTotalOps} → ${statsAfterIngest.totalOps}, pendingDecrypt=${this.pendingDecrypt.length}`);
             this.lastKnownTotalOps = statsAfterIngest.totalOps;
             // Only clear beliefs when state actually changed
             this.invalidateBeliefs();
             (this.emit as any)("ingest-remote");
             this.retryPendingDecrypt();
           } else {
-            debug(`ingest-remote SUPPRESSED (sync-response): totalOps unchanged at ${this.lastKnownTotalOps}, pendingDecrypt=${this.pendingDecrypt.length}`);
             // Even if no new ops, retry pending decrypts — CGKA key state may have changed
             this.retryPendingDecrypt();
           }
@@ -1343,22 +1247,13 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         const requestedResult = await this.getEventBytesForHashes(peerId, requestedHashStrings, metrics);
 
         if (requestedResult.events.length === 0) {
-          debug(
-            `[AMRepoKeyhive] 0 ops requested by ${message.senderId}`
-          );
           // Fall through to confirmation below
         } else {
           if (requestedResult.events.length < requestedHashes.length) {
-            debug(
-              `${requestedHashes.length} keyhive events requested, ${requestedResult.events.length} found.`
-            );
           }
 
           metrics.recordOpsSent(requestedResult.events.length);
 
-          debug(
-            `[AMRepoKeyhive] Sending ${requestedResult.events.length} requested ops to ${message.senderId}`
-          );
 
           if (responseSenderTotal !== undefined && responseReceiverTotal !== undefined) {
             const data = buildSyncOpsCbor(requestedResult.cborEvents, responseSenderTotal, responseReceiverTotal);
@@ -1425,9 +1320,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       throw new Error("peerId must be defined!");
     }
 
-    debug(
-      `[AMRepoKeyhive] Sending keyhive-sync-missing-contact-card to ${message.senderId}`
-    );
 
     const response = {
       type: "keyhive-sync-missing-contact-card",
@@ -1468,32 +1360,20 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       opsReceiverTotal = decoded.receiverTotal;
     }
 
-    debug(
-      `[AMRepoKeyhive] Received ${receivedEvents.length} keyhive events`
-    );
 
     const queueEnterTime = Date.now();
     await this.keyhiveQueue.run(async () => {
       metrics.recordQueueWait(Date.now() - queueEnterTime);
       if (receivedEvents.length > 0) {
-        debug(
-          `[AMRepoKeyhive] Ingesting ${receivedEvents.length} keyhive events from ${message.senderId}`
-        );
 
         try {
           const pendingEvents =
             await this.keyhive.ingestEventsBytes(receivedEvents);
           metrics.recordIngestion(receivedEvents.length, pendingEvents.length);
-          debug(
-            `[AMRepoKeyhive] After ingestion: ${pendingEvents.length} pending events`
-          );
 
           // If there are pending events, try reading from storage (e.g., in case
           // they have already been processed by a separate tab in a browser).
           if (pendingEvents.length > 0) {
-            debug(
-              `${pendingEvents.length} events stuck in pending${this.retryPendingFromStorage ? ". Reading from storage" : ""}`
-            );
             if (this.retryPendingFromStorage) {
               metrics.recordStorageRetry();
               try {
@@ -1501,13 +1381,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                 const retryPending =
                   await this.keyhive.ingestEventsBytes(receivedEvents);
                 if (retryPending.length === 0) {
-                  debug(
-                    `Successfully ingested all events after reading from storage`
-                  );
                 } else {
-                  debug(
-                    `Still have ${retryPending.length} pending events after reading from storage`
-                  );
                 }
               } catch (storageError) {
                 console.error(
@@ -1531,19 +1405,16 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               if (hashes.length !== events.size) {
                 console.error(`[BUG1] STALE after sync-ops ingest! eventHashesForAgent=${hashes.length} but eventsForAgent=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
               } else {
-                debug(`[BUG1] OK after sync-ops ingest: hashes=${hashes.length}, events=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
               }
             }
           }
           if (statsAfterIngest.totalOps !== this.lastKnownTotalOps) {
-            debug(`ingest-remote (sync-ops): totalOps changed ${this.lastKnownTotalOps} → ${statsAfterIngest.totalOps}, pendingDecrypt=${this.pendingDecrypt.length}`);
             this.lastKnownTotalOps = statsAfterIngest.totalOps;
             // Only clear beliefs when state actually changed
             this.invalidateBeliefs();
             (this.emit as any)("ingest-remote");
             this.retryPendingDecrypt();
           } else {
-            debug(`ingest-remote SUPPRESSED (sync-ops): totalOps unchanged at ${this.lastKnownTotalOps}, pendingDecrypt=${this.pendingDecrypt.length}`);
             // Even if no new ops, retry pending decrypts — CGKA key state may have changed
             this.retryPendingDecrypt();
           }
@@ -1557,7 +1428,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                 theirTotalForMe: opsReceiverTotal,
               };
               if (!peer.keyhiveSynced) {
-                debug(`peer ${message.senderId} keyhive sync completed (sending confirmation), enabling encryption`);
                 peer.keyhiveSynced = true;
               }
             }
@@ -1611,9 +1481,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         // Auto-register the peer if we receive a sync check from an unknown
         // sender (can happen if the peer-candidate event was missed due to
         // timing/race conditions, e.g. MessageChannel adapters).
-        debug(
-          `[AMRepoKeyhive] Auto-registering peer from sync-check: ${message.senderId}`
-        );
         peer = new Peer();
         this.peers.set(message.senderId, peer);
       }
@@ -1629,17 +1496,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       const theirBeliefMatchesOurTotal = theirBeliefOfOurTotal === ourActualTotal;
 
       if (ourBeliefMatchesTheirTotal && theirBeliefMatchesOurTotal && peer.beliefCounts !== null) {
-        debug(
-          `[AMRepoKeyhive] Sync check passed for ${message.senderId}: both totals match (ours=${ourActualTotal}, theirs=${theirTotal})`
-        );
         metrics.recordSyncCheckShortCircuited();
         return;
       }
 
       // Mismatch — fall back to full sync request
-      debug(
-        `[AMRepoKeyhive] Sync check failed for ${message.senderId}: mismatch (ourActual=${ourActualTotal}, theirBeliefOfOurs=${theirBeliefOfOurTotal}, theirTotal=${theirTotal}, ourBeliefOfTheirs=${peer.beliefCounts?.theirTotalForMe ?? "null"}). Falling back to full sync.`
-      );
       metrics.recordSyncCheckFallback();
 
       const opHashes = Array.from(hashes.values());
@@ -1681,12 +1542,8 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         theirTotalForMe: theirTotalForUs,
       };
       if (!peer.keyhiveSynced) {
-        debug(`peer ${message.senderId} keyhive sync confirmed, enabling encryption`);
         peer.keyhiveSynced = true;
       }
-      debug(
-        `[AMRepoKeyhive] Updated beliefs for ${message.senderId}: myTotalForThem=${theirBeliefOfOurTotal}, theirTotalForMe=${theirTotalForUs}`
-      );
     }
 
     // After a keyhive sync round completes, CGKA keys may now be available
@@ -1702,9 +1559,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         console.error("[AMRepoKeyhive] Failed to save received event:", error);
       }
     }
-    debug(
-      `[AMRepoKeyhive] Saved ${events.length} received events to storage`
-    );
   }
 
   private async handleIngestError(
@@ -1766,7 +1620,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
   private retryPendingDecrypt(): void {
     if (this.pendingDecrypt.length === 0) return;
     const pending = this.pendingDecrypt.splice(0);
-    debug(`retrying ${pending.length} buffered decrypt messages`);
     // Clear cached doc objects so we get fresh ones with new keys
     this.docObjects.clear();
     for (const entry of pending) {
@@ -1795,7 +1648,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         }
         try {
           const encrypted = (Encrypted as any).fromBytes(rawPayload.slice(1));
-          debug(`RETRY-DECRYPT: attempt ${entry.retries + 1} for doc ${automergeDocId} from ${message.senderId}`);
           const decrypted = await this.keyhive.tryDecrypt(doc, encrypted);
           if (!decrypted) {
             console.warn(`[AMRepoKeyhive] RETRY-DECRYPT: tryDecrypt returned null for doc ${automergeDocId}`);
@@ -1803,7 +1655,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           }
           message.data = decrypted;
           // CGKA keys confirmed working — end grace period early
-          debug(`retry decrypted ${message.type} for doc ${automergeDocId}`);
           if (message.type === "sync" || message.type === "request") {
             void this.checkAccessAndEmit(message);
           } else {
@@ -1846,9 +1697,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     const stats = await this.keyhive.stats();
     const currentTotalOps = stats.totalOps;
     if (currentTotalOps !== this.lastKnownTotalOps) {
-      debug(
-        `[AMRepoKeyhive] Total ops changed from ${this.lastKnownTotalOps} to ${currentTotalOps}, invalidating cache`
-      );
       this.lastKnownTotalOps = currentTotalOps;
       this.invalidateCaches();
     }
@@ -1888,7 +1736,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     const agent = await this.keyhive.getAgent(Identifier.publicId());
     let hashes: PeerHashes;
     if (!agent) {
-      debug(`[DIAG getCachedPublicHashes] getAgent(publicId) returned null`);
       hashes = new Map();
     } else {
       hashes = await getEventHashesForAgent(this.keyhive, agent);
@@ -1995,7 +1842,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         return cached;
       }
       // Cache miss — fall through to WASM
-      debug(`[AMRepoKeyhive] OpCache miss for ${hashStrings.size} hashes, falling back to WASM`);
     }
 
     // Check which hashes already have stored bytes and CBOR

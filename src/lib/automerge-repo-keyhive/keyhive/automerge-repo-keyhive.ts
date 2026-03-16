@@ -26,9 +26,6 @@ import { KeyhiveEventEmitter } from "./emitter";
 import { docIdFromAutomergeUrl, KeyhiveStorage, receiveContactCard } from "./keyhive";
 import { encodeKeyhiveMessageData } from "../network-adapter/messages";
 
-let KH_DEBUG = false;
-function debug(...args: any[]) { if (KH_DEBUG) console.log('[AMRepoKeyhive]', ...args); }
-
 export const KEYHIVE_DB_KEY = "keyhive-db";
 export const KEYHIVE_ARCHIVES_KEY = "/archives/";
 export const KEYHIVE_EVENTS_KEY = "/ops/";
@@ -98,9 +95,6 @@ export class AutomergeRepoKeyhive {
     }
 
     const docId: KeyhiveDocumentId = docIdFromAutomergeUrl(docUrl);
-    debug(
-      `addMemberToDoc: From url ${docUrl} derived Doc Id ${docId.toBytes()}`
-    );
     if (!docId) {
       console.error(`[AMRepoKeyhive] Failed to parse docId from AutomergeUrl`);
       return;
@@ -191,7 +185,6 @@ export class AutomergeRepoKeyhive {
 
   async bestAccessForDoc(id: Identifier, docUrl: AutomergeUrl): Promise<Access | undefined> {
     const docId = docIdFromAutomergeUrl(docUrl);
-    debug(`docId: ${docId}`)
     const idAccess = await this.accessForDoc(id, docId)
     const idStr = idAccess ? idAccess.toString() : "None";
     const idAccessLevel = accessLevels[idAccess ? idAccess.toString() : "None"]
@@ -199,7 +192,6 @@ export class AutomergeRepoKeyhive {
     const publicAccess = await this.keyhive.accessForDoc(publicId, docId);
     const publicStr = publicAccess ? publicAccess.toString() : "None";
     const publicAccessLevel = accessLevels[publicAccess ? publicAccess.toString() : "None"]
-    debug(`docId: ${docId}, idStr: ${idStr}, publicStr: ${publicStr}, idAccessLevel: ${idAccessLevel}, publicAccessLevel: ${publicAccessLevel}`)
     return (idAccessLevel > publicAccessLevel) ? idAccess : publicAccess;
   }
 
@@ -240,9 +232,6 @@ async function generateDoc(kh: Keyhive): Promise<KeyhiveDocument> {
   const changeId = new ChangeId(changeIdArray);
   const g = await kh.generateGroup([]);
   const doc = await kh.generateDocument([g.toPeer()], changeId, []);
-  debug(
-    `Generated Keyhive document with id ${doc.doc_id.toBytes()}`
-  );
   return doc;
 }
 

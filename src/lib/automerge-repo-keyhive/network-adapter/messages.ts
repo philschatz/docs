@@ -7,9 +7,6 @@ import { verifyingKeyPeerIdWithoutSuffix } from "../utilities";
 /** Prefix byte indicating the signed payload contains a full-struct encrypted `Encrypted.toBytes()` blob. */
 export const ENC_ENCRYPTED = 0x01;
 
-let KH_DEBUG = false;
-function debug(...args: any[]) { if (KH_DEBUG) console.log('[AMRepoKeyhive]', ...args); }
-
 export type KeyhiveMessageData = {
   contactCard?: ContactCard;
   signed: Signed;
@@ -34,11 +31,6 @@ export function decodeKeyhiveMessageData(
       signed: Uint8Array;
     };
 
-    if (decoded.contactCard !== "") {
-      debug(
-        "[AMRepoKeyhive] decodeKeyhiveMessageData: parsing contact card from message"
-      );
-    }
     const contactCard =
       decoded.contactCard === ""
         ? undefined
