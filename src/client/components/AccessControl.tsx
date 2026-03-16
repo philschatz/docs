@@ -25,6 +25,40 @@ import {
 } from '../invite-storage';
 import { encodeInvitePayload } from '../invite/invite-codec';
 
+/** Copy or share a URL, with fallbacks for mobile browsers (e.g. Firefox Android). */
+async function shareOrCopy(url: string): Promise<boolean> {
+  // On mobile, prefer the native share sheet
+  if (navigator.share) {
+    try {
+      await navigator.share({ url });
+      return true;
+    } catch {
+      // User cancelled or share failed — fall through to clipboard
+    }
+  }
+  // Try the clipboard API
+  try {
+    await navigator.clipboard.writeText(url);
+    return true;
+  } catch {
+    // Clipboard API unavailable or denied — fall through
+  }
+  // Fallback: temporary textarea + execCommand
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 interface AccessControlProps {
   /** Keyhive document ID (base64-encoded). */
   khDocId: string | undefined;
@@ -156,9 +190,11 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
         baselineAgentIds: members.map(m => m.agentId),
       });
       await checkInvites();
-      navigator.clipboard.writeText(inviteUrl).catch(() => {});
-      setCopiedUrl(inviteUrl);
-      setTimeout(() => setCopiedUrl(null), 1500);
+      const copied = await shareOrCopy(inviteUrl);
+      if (copied) {
+        setCopiedUrl(inviteUrl);
+        setTimeout(() => setCopiedUrl(null), 1500);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -306,10 +342,12 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                               <Tooltip open={copiedUrl === record.inviteUrl}>
                                 <TooltipTrigger asChild>
                                   <Button size="sm" variant="outline"
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(record.inviteUrl);
-                                      setCopiedUrl(record.inviteUrl);
-                                      setTimeout(() => setCopiedUrl(null), 1500);
+                                    onClick={async () => {
+                                      const copied = await shareOrCopy(record.inviteUrl);
+                                      if (copied) {
+                                        setCopiedUrl(record.inviteUrl);
+                                        setTimeout(() => setCopiedUrl(null), 1500);
+                                      }
                                     }}>
                                     Copy
                                   </Button>
