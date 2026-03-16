@@ -19,7 +19,6 @@ export type { CalendarDocument, CalendarEvent, RecurrenceRule, NDay } from '../.
 export { validateTask } from '../../client/tasks/schema';
 export type { TaskDocument, Task } from '../../client/tasks/schema';
 export type { DataGridDocument, DataGridSheet, DataGridColumn, DataGridRow, DataGridCell } from '../../client/datagrid/schema';
-export { migrateDataGridDocument } from '../../client/datagrid/schema';
 
 import { type ValidationError, type SchemaNode, validateNode } from './core';
 import { calendarDocumentSchema, checkCalendarDependencies } from '../../client/calendar/schema';

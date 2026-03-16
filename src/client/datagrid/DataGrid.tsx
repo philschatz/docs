@@ -5,7 +5,6 @@ import { peerColor, initPresence, type PresenceState } from '../../shared/presen
 import { EditorTitleBar } from '../../shared/EditorTitleBar';
 import type { PeerFieldInfo } from '../../shared/presence';
 import type { DataGridDocument } from './schema';
-import { asMultiSheet } from './schema';
 import { useGridCommands, commitReorder, commitAutofill, type GridCommandState, type GridCommandContext } from './commands';
 import { CommandMenuBar, CommandToolbar, CommandContextMenuContent } from './CommandBar';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
@@ -34,7 +33,7 @@ import './datagrid.css';
 
 registerCustomFunctions();
 
-const DATAGRID_QUERY = '{ "@type": .["@type"], name: (.name // "Spreadsheet"), sheets: (.sheets // {}) }';
+const DATAGRID_QUERY = '{ "@type": .["@type"], name: (.name // "Spreadsheet"), sheets: .sheets }';
 
 export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId?: string; readOnly?: boolean; path?: string }) {
   // Read initial sheet from URL — prefer router-provided sheetId, fall back to parsing hash
@@ -881,7 +880,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
 
     const unsubscribe = subscribeQuery(docId, DATAGRID_QUERY, (result, heads) => {
       if (!mounted || !result) return;
-      const d = asMultiSheet(result);
+      const d = result as DataGridDocument;
 
       if (!docRef.current) {
         // First load
