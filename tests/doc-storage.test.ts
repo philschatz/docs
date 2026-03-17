@@ -72,6 +72,14 @@ describe('addDocId', () => {
     addDocId('doc-1');
     expect(getDocList()).toEqual([{ id: 'doc-1', type: 'Calendar', name: 'Work' }]);
   });
+
+  it('stores type, encrypted, and khDocId from invite claim', () => {
+    addDocId('inv-1', { encrypted: true, khDocId: 'kh-1', type: 'Calendar' as any });
+    const entry = getDocList().find(e => e.id === 'inv-1');
+    expect(entry?.type).toBe('Calendar');
+    expect(entry?.encrypted).toBe(true);
+    expect(entry?.khDocId).toBe('kh-1');
+  });
 });
 
 describe('removeDocId', () => {

@@ -59,18 +59,18 @@ export function InvitePage({ docId, docType, inviteKey }: InvitePageProps) {
 
       setStatus('Adding document...');
       const entry = getDocEntry(docId);
+      const resolvedType = docType ?? entry?.type;
       addDocId(docId, {
         ...entry,
         encrypted: true,
         khDocId: result.khDocId,
+        ...(resolvedType ? { type: resolvedType as any } : {}),
       });
 
       setDone(true);
       setStatus('Invite claimed! Redirecting...');
-
-      const type = docType ?? entry?.type;
       setTimeout(() => {
-        window.location.hash = docRoute(docId, type);
+        window.location.hash = docRoute(docId, resolvedType);
       }, 800);
     } catch (err: any) {
       setError(err.message || 'Failed to claim invite');

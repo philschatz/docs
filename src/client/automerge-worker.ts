@@ -143,8 +143,9 @@ async function pushToSubscriptions(docId: string) {
   if (!hasQuerySubs && !hasValidation) return;
 
   const handle = entry.handle;
+  if (handle.isReady && !handle.isReady()) return; // doc not yet loaded/decrypted — wait for change event
   const rawDoc = handle.doc();
-  if (!rawDoc) return; // doc not yet loaded/decrypted — wait for change event
+  if (!rawDoc) return;
   const history = Automerge.getHistory(rawDoc);
   let activeDoc: any;
   if (entry.pinnedVersion !== null) {
@@ -356,17 +357,16 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const handle = await getOrLoadHandle(msg.docId);
       getOrCreateEntry(msg.docId, handle);
       progress(50, 'Loading document data\u2026');
-      if (handle.doc()) {
+      const isReady = handle.isReady ? handle.isReady() : false;
+      if (isReady) {
         progress(100, 'Ready');
         post.postMessage({ type: 'result', id: msg.id, result: { docId: msg.docId } } satisfies WorkerToMain);
       } else {
         // Wait for doc data to arrive
-        const onReady = () => {
-          handle.off('change', onReady);
+        handle.whenReady().then(() => {
           progress(100, 'Ready');
           post.postMessage({ type: 'result', id: msg.id, result: { docId: msg.docId } } satisfies WorkerToMain);
-        };
-        handle.on('change', onReady);
+        });
       }
     } catch (err: any) {
       post.postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -388,9 +388,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       subIdToDocId.set(msg.subId, msg.docId);
 
       // Push immediately if doc is ready, otherwise wait for it
-      if (handle.doc()) {
+      const isReady = handle.isReady ? handle.isReady() : false;
+      if (isReady) {
         await pushToSubscriptions(msg.docId);
-      } else if (handle.whenReady) {
+      } else {
         handle.whenReady().then(() => pushToSubscriptions(msg.docId));
       }
     } catch (err: any) {

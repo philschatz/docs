@@ -19,7 +19,7 @@ export { workerReady, deepAssign };
 // ── jq filter constants ─────────────────────────────────────────────────────
 
 export const HOME_SUMMARY_QUERY =
-  '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), rowCount: ((.sheets | to_entries | .[0].value.rows // {}) | length) }';
+  '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), rowCount: (if .sheets then (.sheets | to_entries | .[0].value.rows // {} | length) else 0 end) }';
 
 // ── Request/Response plumbing ───────────────────────────────────────────────
 

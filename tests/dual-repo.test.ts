@@ -88,6 +88,15 @@ describe('repoFor', () => {
     expect(repoFor('b', secureRepo, insecureRepo)).toBe(insecureRepo);
   });
 
+  it('setDocRepo corrects routing for docs added after init', () => {
+    populateDocRepoMap([]);
+    // Unknown doc falls back to insecure
+    expect(repoFor('late-doc', secureRepo, insecureRepo)).toBe(insecureRepo);
+    // subscribe-query handler would call setDocRepo with encrypted hint
+    setDocRepo('late-doc', 'secure');
+    expect(repoFor('late-doc', secureRepo, insecureRepo)).toBe(secureRepo);
+  });
+
   it('respects setDocRepo override after populate', () => {
     populateDocRepoMap([{ id: 'a', encrypted: true }]);
     expect(repoFor('a', secureRepo, insecureRepo)).toBe(secureRepo);
