@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import wasm from 'vite-plugin-wasm';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve } from 'path';
+import { execSync } from 'child_process';
+import { writeFileSync } from 'fs';
 import { relayPlugin } from './src/backend/relay-plugin';
 
 const automergeEntry = resolve(__dirname, 'node_modules/@automerge/automerge/dist/mjs/entrypoints/fullfat_base64.js');
@@ -85,6 +87,30 @@ function keyhiveWasmPlugin(): Plugin {
 // undefined at runtime.
 const subductionEntry = resolve(__dirname, 'node_modules/@automerge/automerge-subduction/dist/esm/web.js');
 
+function getCommitSha(): string {
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function versionJsonPlugin(): Plugin {
+  const commitSha = getCommitSha();
+  const buildTime = new Date().toISOString();
+  return {
+    name: 'version-json',
+    apply: 'build',
+    closeBundle() {
+      const outDir = resolve(__dirname, 'dist');
+      writeFileSync(
+        resolve(outDir, 'version.json'),
+        JSON.stringify({ commitSha, buildTime }),
+      );
+    },
+  };
+}
+
 export default defineConfig(async () => {
   const istanbulPlugins = process.env.CYPRESS_COVERAGE
     ? [(await import('vite-plugin-istanbul')).default({
@@ -107,6 +133,7 @@ export default defineConfig(async () => {
     automergeWasmPlugin(),
     keyhiveWasmPlugin(),
     ...istanbulPlugins,
+    versionJsonPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
@@ -143,6 +170,9 @@ export default defineConfig(async () => {
     }),
   ],
   root: 'src/client',
+  define: {
+    __APP_VERSION__: JSON.stringify(getCommitSha()),
+  },
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,

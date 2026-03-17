@@ -8,6 +8,8 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
 import relativeTimePlugin from 'dayjs/plugin/relativeTime';
+
+dayjs.extend(relativeTimePlugin);
 import { a1ToInternal } from '@/datagrid/helpers';
 import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
 import { getAllInviteRecords, removeInviteRecord, removeInviteRecordsForDoc } from '@/invite-storage';
@@ -23,8 +25,6 @@ interface DocEntry {
   loading: boolean;
   peers: string[];
 }
-
-dayjs.extend(relativeTimePlugin);
 
 function relativeTime(ts: string | null): string {
   if (!ts) return '';
