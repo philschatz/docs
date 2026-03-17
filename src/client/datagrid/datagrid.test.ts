@@ -14,7 +14,7 @@ import {
   getAutofillSourceValues,
   rewriteFormulaForDeletion,
   updateFormulasForDeletion,
-} from '../src/client/datagrid/helpers';
+} from './helpers';
 
 describe('colIndexToLetter', () => {
   it('converts single-letter columns', () => {

@@ -5,7 +5,7 @@
  * side effects, verifying the business logic without worker infrastructure.
  */
 
-import { initKeyhiveWasm } from '../src/lib/automerge-repo-keyhive';
+import { initKeyhiveWasm } from '../lib/automerge-repo-keyhive';
 import {
   Signer,
   Keyhive,
@@ -17,7 +17,7 @@ import {
   ContactCard,
   Encrypted,
 } from '@keyhive/keyhive/slim';
-import { KeyhiveOps, KeyhiveBridge, KeyhiveOpsSideEffects } from '../src/client/keyhive-ops';
+import { KeyhiveOps, KeyhiveBridge, KeyhiveOpsSideEffects } from './keyhive-ops';
 
 initKeyhiveWasm();
 

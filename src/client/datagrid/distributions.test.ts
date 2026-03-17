@@ -4,7 +4,7 @@ import {
   computeStats,
   formatNum,
   type DistributionInfo,
-} from '../src/client/datagrid/distributions';
+} from './distributions';
 
 describe('distributions', () => {
   describe('sampleDistribution', () => {

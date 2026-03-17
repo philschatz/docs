@@ -1,11 +1,11 @@
 import {
   parseHtmlClipboard,
   buildClipboardData,
-} from '../../src/client/datagrid/clipboard';
+} from './clipboard';
 import {
   a1ToInternal,
   internalToA1,
-} from '../../src/client/datagrid/helpers';
+} from './helpers';
 
 const rowIds = ['r0', 'r1', 'r2', 'r3', 'r4'];
 const colIds = ['c0', 'c1', 'c2', 'c3', 'c4'];

@@ -1,5 +1,5 @@
-import { icsToEvent } from '../src/backend/parser';
-import type { CalendarEvent } from '../src/shared/schemas';
+import { icsToEvent } from './parser';
+import type { CalendarEvent } from '../shared/schemas';
 
 describe('ICS to JMAP Parser', () => {
   describe('Basic Event Parsing', () => {

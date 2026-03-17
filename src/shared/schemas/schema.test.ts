@@ -1,4 +1,4 @@
-import { validateDocument, validateCalendarEvent, validateTask } from '../src/shared/schemas';
+import { validateDocument, validateCalendarEvent, validateTask } from '.';
 
 // ---------------------------------------------------------------------------
 // helpers

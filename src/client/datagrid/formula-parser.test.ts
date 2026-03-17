@@ -8,8 +8,8 @@ import {
   extractCellRefs,
   nodeAtOffset,
   FormulaParseError,
-} from '../src/client/datagrid/formula-parser';
-import type { FormulaAST, FormulaNode, CellRef, RangeRef } from '../src/client/datagrid/formula-parser';
+} from './formula-parser';
+import type { FormulaAST, FormulaNode, CellRef, RangeRef } from './formula-parser';
 
 // ─── Tokenizer ───────────────────────────────────────────────────────────────
 

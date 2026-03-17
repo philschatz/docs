@@ -1,4 +1,4 @@
-import { run, one, compile, JqError } from '../src/shared/jq';
+import { run, one, compile, JqError } from './jq';
 
 describe('jq', () => {
   // ---- Identity & literals ----

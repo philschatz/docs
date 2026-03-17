@@ -3,7 +3,7 @@
  * Corner cases: undefined deletion, null handling, nested merging, categories special case.
  */
 
-import { deepAssign } from '../src/shared/deep-assign';
+import { deepAssign } from './deep-assign';
 
 describe('deepAssign', () => {
   it('merges flat properties', () => {

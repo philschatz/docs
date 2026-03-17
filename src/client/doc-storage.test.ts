@@ -14,7 +14,7 @@ const localStorageMock = {
 };
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
 
-import { getDocList, addDocId, removeDocId, updateDocCache, touchDoc } from '../src/client/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, touchDoc } from './doc-storage';
 
 beforeEach(() => {
   store = {};

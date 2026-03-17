@@ -1,5 +1,5 @@
-import { expandRange, calendarQuery } from '../src/client/calendar/calendar-query';
-import { one } from '../src/shared/jq';
+import { expandRange, calendarQuery } from './calendar-query';
+import { one } from '../../shared/jq';
 
 describe('expandRange', () => {
   it('expands a range by ±1 month', () => {

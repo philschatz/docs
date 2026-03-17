@@ -6,16 +6,16 @@
  * invite generate → claim round-trip.
  */
 
-import { Pending, PromiseQueue } from '../src/lib/automerge-repo-keyhive/network-adapter/pending';
-import { peerIdFromVerifyingKey } from '../src/lib/automerge-repo-keyhive/network-adapter/messages';
+import { Pending, PromiseQueue } from './network-adapter/pending';
+import { peerIdFromVerifyingKey } from './network-adapter/messages';
 import {
   isKeyhivePeerId,
   verifyingKeyPeerIdWithoutSuffix,
   uint8ArrayToHex,
   hexToUint8Array,
   peerIdFromSigner,
-} from '../src/lib/automerge-repo-keyhive/utilities';
-import { initKeyhiveWasm } from '../src/lib/automerge-repo-keyhive';
+} from './utilities';
+import { initKeyhiveWasm } from '.';
 import type { PeerId } from '@automerge/automerge-repo/slim';
 
 // WASM imports — available after initKeyhiveWasm()
@@ -32,12 +32,12 @@ import {
   DocumentId,
 } from '@keyhive/keyhive/slim';
 // getEventHashesForAgent used by production sync protocol — kept for reference
-// import { getEventHashesForAgent } from '../src/lib/automerge-repo-keyhive/utilities';
+// import { getEventHashesForAgent } from './utilities';
 import {
   signData,
   verifyData,
   decodeKeyhiveMessageData,
-} from '../src/lib/automerge-repo-keyhive/network-adapter/messages';
+} from './network-adapter/messages';
 
 beforeAll(() => {
   initKeyhiveWasm();
@@ -1144,7 +1144,7 @@ describe('automerge-worker patterns', () => {
 // seed in the invite URL. Bob must sync keyhive events from Alice via the
 // relay before he can reconstruct the invite keyhive and claim access.
 
-import { keyhiveIdentifierFromPeerId } from '../src/lib/automerge-repo-keyhive/utilities';
+import { keyhiveIdentifierFromPeerId } from './utilities';
 
 describe('seed-only invite flow', () => {
   // Helper: simulate Alice's generateInvite (seed-only, no archive in URL)
@@ -1439,7 +1439,7 @@ describe('seed-only invite flow', () => {
     // This is the exact production failure: the keyhive sync protocol uses
     // eventsForAgent() to send events to peers. Since Bob isn't a member of
     // any document, Alice sends him nothing useful about the invite signer.
-    const { KeyhiveOps } = await import('../src/client/keyhive-ops');
+    const { KeyhiveOps } = await import('../../client/keyhive-ops');
     const bridge = {
       ChangeId, DocumentId,
       Identifier, Signer, CiphertextStore, Keyhive, Access,
@@ -1480,7 +1480,7 @@ describe('seed-only invite flow', () => {
     // has CGKA in an uninitialized state. This means claimInviteWithKeyhive
     // (which calls addMember internally) fails. This is the deeper issue
     // blocking the seed-only flow.
-    const { KeyhiveOps } = await import('../src/client/keyhive-ops');
+    const { KeyhiveOps } = await import('../../client/keyhive-ops');
     const bridge = {
       ChangeId, DocumentId,
       Identifier, Signer, CiphertextStore, Keyhive, Access,

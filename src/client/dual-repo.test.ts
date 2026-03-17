@@ -4,7 +4,7 @@ import {
   getDocRepo,
   clearDocRepoMap,
   repoFor,
-} from '../src/client/repo-routing';
+} from './repo-routing';
 
 beforeEach(() => {
   clearDocRepoMap();

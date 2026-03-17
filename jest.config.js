@@ -13,7 +13,7 @@ module.exports = {
       setupFiles: ['<rootDir>/tests/setup-subduction.js'],
       roots: ['<rootDir>/src', '<rootDir>/tests'],
       testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
-      testPathIgnorePatterns: ['<rootDir>/tests/ui/'],
+      testPathIgnorePatterns: ['\\.test\\.tsx$', '/clipboard\\.test\\.ts$'],
       transform: {
         '^.+\\.ts$': ['ts-jest', { diagnostics: false }],
         '^(?!.*(?:setup|teardown)\\.js).+\\.js$': ['ts-jest', { useESM: false, diagnostics: false }],
@@ -35,8 +35,8 @@ module.exports = {
       displayName: 'ui',
       preset: 'ts-jest',
       testEnvironment: 'jsdom',
-      roots: ['<rootDir>/tests/ui'],
-      testMatch: ['**/?(*.)+(spec|test).ts?(x)'],
+      roots: ['<rootDir>/src/client'],
+      testMatch: ['**/?(*.)+(spec|test).tsx', '**/clipboard.test.ts'],
       transform: {
         '^.+\\.tsx?$': ['ts-jest', {
           diagnostics: false,
@@ -65,7 +65,7 @@ module.exports = {
         '^react$': '<rootDir>/node_modules/preact/compat/dist/compat.js',
         '^react-dom$': '<rootDir>/node_modules/preact/compat/dist/compat.js',
         '^react-dom/test-utils$': '<rootDir>/node_modules/preact/test-utils/dist/testUtils.js',
-        '\\.css$': '<rootDir>/tests/ui/__mocks__/style.js',
+        '\\.css$': '<rootDir>/src/client/__mocks__/style.js',
       },
     },
   ],
