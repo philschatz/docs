@@ -711,9 +711,6 @@ describe('KeyhiveOps', () => {
       const verifyingKeyBytes = signer.verifyingKey;
       const vkIdentifier = new Identifier(verifyingKeyBytes);
 
-      console.log('[test] kh.id hex:', Buffer.from(khIdBytes).toString('hex'));
-      console.log('[test] signer.verifyingKey hex:', Buffer.from(verifyingKeyBytes).toString('hex'));
-      console.log('[test] match:', Buffer.from(khIdBytes).equals(Buffer.from(verifyingKeyBytes)));
 
       // If this fails, that's the root cause of the production bug
       expect(Buffer.from(khIdBytes).equals(Buffer.from(verifyingKeyBytes))).toBe(true);
@@ -722,8 +719,6 @@ describe('KeyhiveOps', () => {
       const archive = await kh.toArchive();
       const kh2 = await archive.tryToKeyhive(CiphertextStore.newInMemory(), signer, () => {});
       const kh2IdBytes = kh2.id.bytes;
-      console.log('[test] kh2.id after reload hex:', Buffer.from(kh2IdBytes).toString('hex'));
-      console.log('[test] match after reload:', Buffer.from(kh2IdBytes).equals(Buffer.from(verifyingKeyBytes)));
       expect(Buffer.from(kh2IdBytes).equals(Buffer.from(verifyingKeyBytes))).toBe(true);
 
       // After reload with invite ingested
@@ -736,8 +731,6 @@ describe('KeyhiveOps', () => {
       const archive2 = await kh.toArchive();
       const kh3 = await archive2.tryToKeyhive(CiphertextStore.newInMemory(), signer, () => {});
       const kh3IdBytes = kh3.id.bytes;
-      console.log('[test] kh3.id after invite+reload hex:', Buffer.from(kh3IdBytes).toString('hex'));
-      console.log('[test] match after invite+reload:', Buffer.from(kh3IdBytes).equals(Buffer.from(verifyingKeyBytes)));
       expect(Buffer.from(kh3IdBytes).equals(Buffer.from(verifyingKeyBytes))).toBe(true);
     });
 
@@ -799,8 +792,6 @@ describe('KeyhiveOps', () => {
       const docIdOnB = bReachable[0].doc.doc_id;
       const aliceAccess = await khB.accessForDoc(aliceId2, docIdOnB);
 
-      console.log('[test] Identity match after archive reload:', idMatch);
-      console.log('[test] Alice access from Bob perspective:', aliceAccess?.toString() ?? 'null');
 
       // This is the production bug: after archive reload, Alice's identity
       // should still have Admin access from Bob's perspective
@@ -828,7 +819,6 @@ describe('KeyhiveOps', () => {
       const docIdOnB = bReachable[0].doc.doc_id;
 
       const aliceAccess = await khB.accessForDoc(aliceIdentifier, docIdOnB);
-      console.log('[test] Access before contact card exchange:', aliceAccess?.toString() ?? 'null');
 
       expect(aliceAccess).toBeDefined();
       expect(aliceAccess!.toString()).toBe('Admin');
@@ -855,16 +845,12 @@ describe('KeyhiveOps', () => {
 
       const docMapBytes = (docMapDocId as any).toBytes ? (docMapDocId as any).toBytes() : docMapDocId;
       const reachableBytes = (reachableDocId as any).toBytes ? (reachableDocId as any).toBytes() : reachableDocId;
-      console.log('[test] docMap doc_id:', Buffer.from(docMapBytes).toString('hex'));
-      console.log('[test] reachable doc_id:', Buffer.from(reachableBytes).toString('hex'));
 
       // Check access using both DocumentId sources
       const aliceId = new Identifier(khA.id.bytes);
       const accessViaDocMap = await khB.accessForDoc(aliceId, docMapDocId);
       const accessViaReachable = await khB.accessForDoc(aliceId, reachableDocId);
 
-      console.log('[test] Access via docMap:', accessViaDocMap?.toString() ?? 'null');
-      console.log('[test] Access via reachable:', accessViaReachable?.toString() ?? 'null');
 
       expect(accessViaDocMap).toBeDefined();
       expect(accessViaReachable).toBeDefined();
@@ -897,7 +883,6 @@ describe('KeyhiveOps', () => {
       const wrongId = new Identifier(unrelatedSigner.verifyingKey);
       const wrongAccess = await khB.accessForDoc(wrongId, docIdOnB);
       // This returns null — exactly the production bug behavior
-      console.log('[test] Access with wrong identifier:', wrongAccess?.toString() ?? 'null');
       expect(wrongAccess).toBeUndefined();
     });
 
@@ -932,10 +917,6 @@ describe('KeyhiveOps', () => {
       const bReachable = await khB.reachableDocs();
       const docIdOnB = bReachable[0].doc.doc_id;
       const members = await khB.docMemberCapabilities(docIdOnB);
-      console.log('[test] Members from Bob perspective:');
-      for (const m of members) {
-        console.log(`  ${m.who.toString()} → ${m.can.toString()} (isIndividual: ${m.who.isIndividual()})`);
-      }
 
       // Check if Alice appears in members
       const aliceMember = members.find((m: any) => {
@@ -948,8 +929,6 @@ describe('KeyhiveOps', () => {
       const aliceId = new Identifier(khA.id.bytes);
       const access = await khB.accessForDoc(aliceId, docIdOnB);
 
-      console.log('[test] Alice in members:', !!aliceMember, aliceMember ? `role=${aliceMember.can.toString()}` : '');
-      console.log('[test] accessForDoc result:', access?.toString() ?? 'null');
 
       // Both should agree: if members shows Alice, accessForDoc should too
       if (aliceMember) {

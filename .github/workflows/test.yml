@@ -37,12 +37,5 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
-      - name: Build frontend
-        run: npm run build
-
-      - name: Cypress e2e tests
-        run: |
-          rm -rf .data-cypress
-          PORT=4444 NODE_ENV=production AUTOMERGE_DATA_DIR=.data-cypress \
-            npx start-server-and-test 'npx ts-node src/backend/server.ts' http://localhost:4444/health \
-            './run-cypress.sh run --config baseUrl=http://localhost:4444'
+      - name: Build + Cypress e2e tests
+        run: npm run test:cy

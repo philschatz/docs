@@ -1275,7 +1275,6 @@ describe('seed-only invite flow', () => {
     // FAILS: eventsForAgent doesn't include invite signer events
     // Bob gets 0 or very few events — none about the invite signer
     expect(reachable.length).toBe(0);
-    console.log(`[seed-only-test] eventsForAgent(Bob) returned ${eventCount} events, reachable=${reachable.length}`);
   });
 
   it('ingestArchive DOES include invite signer events (archive-based invite works)', async () => {
@@ -1377,10 +1376,6 @@ describe('seed-only invite flow', () => {
     const peerId = peerIdFromSigner(signer);
     const peerIdentifier = keyhiveIdentifierFromPeerId(peerId);
 
-    console.log('[id-match-test] signer vk:', Array.from(signer.verifyingKey).slice(0, 4));
-    console.log('[id-match-test] newCard.id:', Array.from(newCard.id.toBytes()).slice(0, 4));
-    console.log('[id-match-test] existingCard.id:', Array.from(existingCard.id.toBytes()).slice(0, 4));
-    console.log('[id-match-test] peerIdIdentifier:', Array.from(peerIdentifier.toBytes()).slice(0, 4));
 
     // These should all match — if they don't, we've found the bug
     expect(newCard.id.toBytes()).toEqual(peerIdentifier.toBytes());

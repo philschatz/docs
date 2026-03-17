@@ -15,7 +15,7 @@ if (!fs.existsSync(distDir)) {
 const app = express();
 app.use(express.static(distDir));
 // SPA fallback: serve index.html for all non-file routes
-app.get('*', (_req, res) => {
+app.get('{*path}', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
