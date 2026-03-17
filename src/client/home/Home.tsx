@@ -12,6 +12,9 @@ import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 dayjs.extend(relativeTimePlugin);
 import { a1ToInternal } from '@/datagrid/helpers';
 import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
+
+declare const __APP_VERSION__: string;
+declare const __BUILD_TIME__: string;
 import { getAllInviteRecords, removeInviteRecord, removeInviteRecordsForDoc } from '@/invite-storage';
 
 type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
@@ -545,6 +548,10 @@ export function Home({ path }: { path?: string }) {
             Install: use your browser's <em>"Add to Home screen"</em> or <em>"Install app"</em> menu option
           </span>
         )}
+      </div>
+
+      <div className="text-xs text-muted-foreground mt-4 text-center">
+        <a href={`https://github.com/philschatz/drive/commit/${__APP_VERSION__}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{__APP_VERSION__}</a> · built {dayjs(__BUILD_TIME__).fromNow()}
       </div>
     </div>
   );

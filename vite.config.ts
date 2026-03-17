@@ -172,6 +172,7 @@ export default defineConfig(async () => {
   root: 'src/client',
   define: {
     __APP_VERSION__: JSON.stringify(getCommitSha()),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   build: {
     outDir: resolve(__dirname, 'dist'),
