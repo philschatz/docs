@@ -34,6 +34,7 @@ export type MainToWorker =
   | { type: 'kh-enable-sharing'; id: number; automergeDocId: string }
   | { type: 'kh-register-doc-mapping'; automergeDocId: string; khDocId: string }
   | { type: 'kh-register-sharing-group'; id: number; khDocId: string; groupId: string }
+  | { type: 'kh-get-known-contacts'; id: number; excludeDocId?: string }
   | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; automergeDocId: string }
   | { type: 'open-doc'; id: number; docId: string; secure?: boolean }
   | { type: 'validate-subscribe'; docId: string }
@@ -611,6 +612,16 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.getMyAccess(msg.khDocId);
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+    } catch (err: any) {
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+    }
+  }
+
+  if (msg.type === 'kh-get-known-contacts') {
+    try {
+      if (!khOps) throw new Error('Keyhive not available');
+      const result = await khOps.getKnownContacts(msg.excludeDocId);
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);

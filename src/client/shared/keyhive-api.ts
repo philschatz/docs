@@ -81,6 +81,11 @@ export function receiveContactCard(cardJson: string): Promise<{ agentId: string 
   return request('kh-receive-contact-card', { cardJson });
 }
 
+/** Get known contacts across all documents, excluding members of a specific doc. */
+export function getKnownContacts(excludeDocId?: string): Promise<MemberInfo[]> {
+  return request('kh-get-known-contacts', { excludeDocId });
+}
+
 /** Get all members and roles for a document. Each member has an `isMe` flag. */
 export function getDocMembers(khDocId: string): Promise<MemberInfo[]> {
   return request('kh-get-doc-members', { khDocId });

@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import {
   getDocMembers,
@@ -15,6 +15,8 @@ import {
   changeRole,
   revokeMember,
   generateInvite,
+  getKnownContacts,
+  addMember,
   type MemberInfo,
 } from '../shared/keyhive-api';
 import {
@@ -104,6 +106,8 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
+  const [contacts, setContacts] = useState<MemberInfo[]>([]);
+  const [selectedContact, setSelectedContact] = useState<string>('__new__');
   const [inviteRole, setInviteRole] = useState<string>('read');
   const [inviteStatuses, setInviteStatuses] = useState<InviteStatus[]>([]);
   const [loading, setLoading] = useState(false);
@@ -142,14 +146,21 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   const refresh = useCallback(async () => {
     if (!khDocId) return;
     try {
-      const [m, a] = await Promise.all([
+      const [m, a, c] = await Promise.all([
         getDocMembers(khDocId),
         getMyAccess(khDocId),
+        getKnownContacts(khDocId),
       ]);
       // Normalize roles to lowercase to match SelectItem values
       const normalized = m.map((member: MemberInfo) => ({ ...member, role: member.role.toLowerCase() }));
       setMembers(normalized);
       setMyAccess(a);
+      setContacts(c);
+      // Reset selection if the previously selected contact is no longer available
+      setSelectedContact(prev => {
+        if (prev === '__new__') return prev;
+        return c.some(ct => ct.agentId === prev) ? prev : (c.length > 0 ? c[0].agentId : '__new__');
+      });
       await checkInvites(normalized);
     } catch (err: any) {
       setError(err.message);
@@ -179,6 +190,23 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
     setLoading(true);
     try {
       await revokeMember(agentId, khDocId);
+      await refresh();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddOrInvite = async () => {
+    if (!khDocId) return;
+    if (selectedContact === '__new__') {
+      await handleGenerateInvite();
+      return;
+    }
+    setLoading(true);
+    try {
+      await addMember(selectedContact, khDocId, inviteRole);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -300,15 +328,25 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
             ))}
           </div>
 
-          {/* Invite section (admin only) */}
+          {/* Add member section (admin only) */}
           {isAdmin && (
             <div className="mt-6">
-              <h3 className="text-sm font-medium mb-2">Invite</h3>
-              <p className="text-xs text-muted-foreground mb-2">
-                Generate a one-time invite link. The key is rotated after the recipient claims it,
-                so sharing the URL only works once.
-              </p>
+              <h3 className="text-sm font-medium mb-2">Add member</h3>
               <div className="flex items-center gap-2 mb-3">
+                <Select value={selectedContact} onValueChange={setSelectedContact}>
+                  <SelectTrigger className="h-8 text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {contacts.map(c => (
+                      <SelectItem key={c.agentId} value={c.agentId}>
+                        {c.agentId.slice(0, 8)}…
+                      </SelectItem>
+                    ))}
+                    {contacts.length > 0 && <SelectSeparator />}
+                    <SelectItem value="__new__">Invite new person</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Select value={inviteRole} onValueChange={setInviteRole}>
                   <SelectTrigger className="h-8 text-xs w-24">
                     <SelectValue />
@@ -319,8 +357,8 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button size="sm" onClick={handleGenerateInvite} disabled={loading}>
-                  Generate link
+                <Button size="sm" onClick={handleAddOrInvite} disabled={loading}>
+                  {selectedContact === '__new__' ? 'Generate link' : 'Add'}
                 </Button>
               </div>
 

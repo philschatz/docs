@@ -109,7 +109,16 @@ export class KeyhiveOps {
   async addMember(agentIdB64: string, docId: string, role: string): Promise<true> {
     const doc = this.khDocuments.get(docId);
     if (!doc) throw new Error('Document not found');
-    const agent = await this.findAgentByIdBytes(doc, agentIdB64);
+    let agent: any;
+    try {
+      agent = await this.findAgentByIdBytes(doc, agentIdB64);
+    } catch {
+      // Agent not yet a member of this doc — try global lookup
+      const id = new this.bridge.Identifier(base64ToBytes(agentIdB64));
+      const found = await this.kh.getAgent(id);
+      if (!found) throw new Error('Agent not found');
+      agent = found;
+    }
     const access = this.bridge.Access.tryFromString(role);
     if (!access) throw new Error(`Invalid role: ${role}`);
     await this.kh.addMember(agent, doc.toMembered(), access, []);
@@ -244,6 +253,40 @@ export class KeyhiveOps {
       }
     }
     return true;
+  }
+
+  async getKnownContacts(excludeDocId?: string): Promise<MemberInfo[]> {
+    const me = await this.kh.individual;
+    const myAgentStr = me.toAgent().toString();
+    const seen = new Map<string, MemberInfo>();
+
+    const excludeSet = new Set<string>();
+    if (excludeDocId) {
+      const excludeMembers = await this.getDocMembers(excludeDocId);
+      for (const m of excludeMembers) excludeSet.add(m.agentId);
+    }
+
+    const reachable = await this.kh.reachableDocs();
+    for (const summary of reachable) {
+      const members = await this.kh.docMemberCapabilities(summary.doc.doc_id);
+      for (const m of members) {
+        if (!m.who.isIndividual()) continue;
+        const agentId = bytesToBase64(m.who.id.toBytes());
+        if (m.who.toString() === myAgentStr) continue;
+        if (excludeSet.has(agentId)) continue;
+        if (!seen.has(agentId)) {
+          seen.set(agentId, {
+            agentId,
+            displayId: m.who.toString(),
+            role: m.can.toString(),
+            isIndividual: true,
+            isGroup: false,
+            isMe: false,
+          });
+        }
+      }
+    }
+    return [...seen.values()];
   }
 
   /** Look up an Agent from docMemberCapabilities by matching Identifier bytes (base64). */
