@@ -25,6 +25,7 @@ module.exports = {
         '^@automerge/automerge/slim$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
         '^@automerge/automerge/slim/next$': '<rootDir>/node_modules/@automerge/automerge/dist/cjs/fullfat_node.cjs',
         '^@automerge/automerge-repo/slim$': '<rootDir>/node_modules/@automerge/automerge-repo/dist/entrypoints/slim.js',
+        '^@automerge/automerge-subduction$': '<rootDir>/node_modules/@automerge/automerge-repo/node_modules/@automerge/automerge-subduction/dist/cjs/node.cjs',
         '^@automerge/automerge-repo-subduction-bridge$': '<rootDir>/tests/subduction-bridge-shim.js',
         '^@keyhive/keyhive/slim$': '<rootDir>/tests/keyhive-shim.js',
         '^@keyhive/keyhive/keyhive_wasm\\.base64\\.js$': '<rootDir>/tests/keyhive-base64-shim.js',

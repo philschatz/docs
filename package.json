@@ -33,12 +33,13 @@
   "license": "ISC",
   "dependencies": {
     "@automerge/automerge": "^3.2.4",
-    "@automerge/automerge-repo": "^2.6.0-subduction.2",
-    "@automerge/automerge-repo-keyhive": "^0.1.0-alpha.17x",
-    "@automerge/automerge-repo-network-messagechannel": "^2.6.0-subduction.2",
-    "@automerge/automerge-repo-network-websocket": "^2.6.0-subduction.2",
-    "@automerge/automerge-repo-storage-indexeddb": "^2.6.0-subduction.2",
-    "@automerge/automerge-repo-storage-nodefs": "^2.6.0-subduction.2",
+    "@automerge/automerge-repo": "^2.6.0-subduction.4",
+    "@automerge/automerge-repo-keyhive": "^0.1.0-alpha.17za",
+    "@automerge/automerge-repo-network-messagechannel": "^2.6.0-subduction.4",
+    "@automerge/automerge-repo-network-websocket": "^2.6.0-subduction.4",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.6.0-subduction.4",
+    "@automerge/automerge-repo-storage-nodefs": "^2.6.0-subduction.4",
+    "@automerge/automerge-subduction": "^0.5.0-alpha.1",
     "@codemirror/autocomplete": "^6.20.0",
     "@codemirror/language": "^6.12.2",
     "@codemirror/state": "^6.5.4",
@@ -69,7 +70,7 @@
     "express": "^5.2.1",
     "hyperformula": "^3.2.0",
     "ical.js": "^2.1.0",
-    "lucide-react": "^0.575.0",
+    "lucide-react": "^0.577.0",
     "material-symbols": "^0.40.2",
     "multer": "^2.0.2",
     "preact": "^10.28.4",
@@ -97,7 +98,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/supertest": "^6.0.3",
+    "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.1",
     "cypress": "^15.10.0",
     "jest": "^30.2.0",
@@ -110,6 +111,6 @@
     "vite": "^7.3.1",
     "vite-plugin-istanbul": "^7.2.1",
     "vite-plugin-pwa": "^1.2.0",
-    "vite-plugin-wasm": "^3.5.0"
+    "vite-plugin-wasm": "^3.6.0"
   }
 }
