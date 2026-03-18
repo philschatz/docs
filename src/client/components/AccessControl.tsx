@@ -25,6 +25,7 @@ import {
   removeInviteRecord,
   type InviteRecord,
 } from '../invite-storage';
+import { getContactName, setContactName } from '../contact-names';
 import { encodeInvitePayload } from '../invite/invite-codec';
 import QRCode from 'qrcode';
 
@@ -69,6 +70,53 @@ function InviteQR({ url }: { url: string }) {
   }, [url]);
   if (!svg) return null;
   return <div className="mt-2 flex justify-center" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+function EditableName({ agentId, suffix }: { agentId: string; suffix?: any }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const saved = getContactName(agentId);
+
+  const startEdit = () => {
+    setDraft(saved || '');
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setContactName(agentId, draft);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="text-sm flex-1 border-b border-border bg-transparent outline-none px-0"
+        value={draft}
+        onInput={(e: any) => setDraft(e.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(e: any) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        autoFocus
+        placeholder={agentId.slice(0, 8) + '…'}
+      />
+    );
+  }
+
+  return (
+    <span className="text-sm flex-1 truncate group" title={agentId}>
+      {saved || `${agentId.slice(0, 8)}…`}
+      {suffix}
+      <button
+        className="ml-1 opacity-0 group-hover:opacity-50 hover:!opacity-100 inline-flex align-middle"
+        onClick={(e: any) => { e.stopPropagation(); startEdit(); }}
+        title="Set friendly name"
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>edit</span>
+      </button>
+    </span>
+  );
 }
 
 interface AccessControlProps {
@@ -294,12 +342,10 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                 <span className="material-symbols-outlined text-muted-foreground" style={{ fontSize: 16 }}>
                   {member.isGroup ? 'group' : 'person'}
                 </span>
-                <span className="text-sm flex-1 truncate" title={member.agentId}>
-                  {member.agentId.slice(0, 8)}…
-                  {member.isMe && (
-                    <span className="text-xs text-muted-foreground ml-1">(you)</span>
-                  )}
-                </span>
+                <EditableName
+                  agentId={member.agentId}
+                  suffix={member.isMe ? <span className="text-xs text-muted-foreground ml-1">(you)</span> : undefined}
+                />
                 {isAdmin ? (
                   <div className="flex items-center gap-1">
                     <Select value={member.role} onValueChange={(val: string) => handleChangeRole(member.agentId, val)}>
@@ -338,11 +384,20 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {contacts.map(c => (
-                      <SelectItem key={c.agentId} value={c.agentId}>
-                        {c.agentId.slice(0, 8)}…
-                      </SelectItem>
-                    ))}
+                    {[...contacts]
+                      .map(c => ({ contact: c, name: getContactName(c.agentId) }))
+                      .sort((a, b) => {
+                        if (a.name && !b.name) return -1;
+                        if (!a.name && b.name) return 1;
+                        const aKey = a.name || a.contact.agentId;
+                        const bKey = b.name || b.contact.agentId;
+                        return aKey.localeCompare(bKey);
+                      })
+                      .map(({ contact: c, name }) => (
+                        <SelectItem key={c.agentId} value={c.agentId} className={name ? '' : 'text-muted-foreground'} title={c.agentId}>
+                          {name || `${c.agentId.slice(0, 8)}…`}
+                        </SelectItem>
+                      ))}
                     {contacts.length > 0 && <SelectSeparator />}
                     <SelectItem value="__new__">Invite new person</SelectItem>
                   </SelectContent>
@@ -382,7 +437,7 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span>
                           Accepted — key rotated
                           {acceptedBy && (
-                            <span className="text-muted-foreground ml-1">({acceptedBy.agentId.slice(0, 8)}…)</span>
+                            <span className="text-muted-foreground ml-1">({getContactName(acceptedBy.agentId) || `${acceptedBy.agentId.slice(0, 8)}…`})</span>
                           )}
                         </div>
                       ) : (
