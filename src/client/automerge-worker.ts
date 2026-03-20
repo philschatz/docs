@@ -5,7 +5,7 @@ import { KeyhiveOps, errMsg } from './keyhive-ops';
 import { populateDocRepoMap, setDocRepo, repoFor as _repoFor } from './repo-routing';
 
 export type MainToWorker =
-  | { type: 'init'; docList: Array<{ id: string; encrypted?: boolean }>; port?: MessagePort }
+  | { type: 'init'; appBaseUrl: string; port?: MessagePort }
   | { type: 'query'; id: number; docId: string; filter: string }
   // New worker-owned doc API
   | { type: 'create-doc'; id: number; initialJson: any; secure: boolean }
@@ -20,6 +20,12 @@ export type MainToWorker =
   | { type: 'presence-subscribe'; docId: string }
   | { type: 'presence-unsubscribe'; docId: string }
   | { type: 'presence-set'; docId: string; state: any }
+  // Doc list mutations (IDB-backed)
+  | { type: 'add-doc-to-list'; docId: string; [key: string]: any }
+  | { type: 'remove-doc-from-list'; docId: string }
+  // Contact name mutations (IDB-backed)
+  | { type: 'set-contact-name'; agentId: string; name: string }
+  | { type: 'remove-contact-name'; agentId: string }
   // Keyhive operations
   | { type: 'kh-get-identity'; id: number }
   | { type: 'kh-get-contact-card'; id: number }
@@ -29,7 +35,7 @@ export type MainToWorker =
   | { type: 'kh-add-member'; id: number; agentId: string; docId: string; role: string }
   | { type: 'kh-revoke-member'; id: number; agentId: string; docId: string }
   | { type: 'kh-change-role'; id: number; agentId: string; docId: string; newRole: string }
-  | { type: 'kh-generate-invite'; id: number; docId: string; groupId: string; role: string }
+  | { type: 'kh-generate-invite'; id: number; docId: string; groupId: string; role: string; automergeDocId: string; docType: string }
   | { type: 'kh-list-devices'; id: number }
   | { type: 'kh-enable-sharing'; id: number; automergeDocId: string }
   | { type: 'kh-register-doc-mapping'; automergeDocId: string; khDocId: string }
@@ -57,6 +63,9 @@ export type WorkerToMain =
   | { type: 'open-doc-progress'; id: number; pct: number; message: string }
   // Validation
   | { type: 'validation-result'; docId: string; errors: ValidationError[] }
+  // Doc list / contact names push
+  | { type: 'doc-list-updated'; list: Array<{ id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string }> }
+  | { type: 'contact-names-updated'; names: Record<string, string> }
   // Keyhive responses
   | { type: 'kh-result'; id: number; result?: any; error?: string };
 
@@ -94,6 +103,7 @@ let secureRepo: InstanceType<typeof Repo> | null = null;
 let insecureRepo: InstanceType<typeof Repo> | null = null;
 let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = null;
 let khOps: KeyhiveOps | null = null;
+let appBaseUrl = '';
 
 /** Pick the correct repo for a given docId based on the docRepoMap. */
 function getRepo(docId: string): InstanceType<typeof Repo> {
@@ -307,8 +317,19 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
       }
 
-      // --- Populate docRepoMap from init doc list ---
-      populateDocRepoMap(msg.docList);
+      // --- Store appBaseUrl ---
+      appBaseUrl = msg.appBaseUrl;
+
+      // --- Load doc list from IDB ---
+      const { idbGet } = await import('./idb-storage');
+      type StoredDocEntry = { id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string };
+      const docList = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+      populateDocRepoMap(docList);
+      (self as any).postMessage({ type: 'doc-list-updated', list: docList } satisfies WorkerToMain);
+
+      // --- Load and push contact names from IDB ---
+      const contactNames = (await idbGet<Record<string, string>>('contact-names')) ?? {};
+      (self as any).postMessage({ type: 'contact-names-updated', names: contactNames } satisfies WorkerToMain);
 
       // --- Attach MessageChannel port to primary repo ---
       const primaryRepo = secureRepo ?? insecureRepo;
@@ -564,7 +585,74 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  // --- Keyhive operations ---
+  // --- Doc list mutations (IDB-backed) ---
+
+  if (msg.type === 'add-doc-to-list') {
+    try {
+      const { idbGet, idbSet } = await import('./idb-storage');
+      type StoredDocEntry = { id: string; [key: string]: any };
+      const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+      const { docId, type: _type, ...rest } = msg;
+      const metadata = { ...rest };
+      const idx = list.findIndex(e => e.id === docId);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...metadata, id: docId };
+        list.unshift(list.splice(idx, 1)[0]);
+      } else {
+        list.unshift({ id: docId, ...metadata });
+      }
+      await idbSet('automerge-doc-ids', list);
+      (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.warn('[worker] add-doc-to-list failed:', errMsg(err));
+    }
+  }
+
+  if (msg.type === 'remove-doc-from-list') {
+    try {
+      const { idbGet, idbSet } = await import('./idb-storage');
+      type StoredDocEntry = { id: string; [key: string]: any };
+      const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+      const filtered = list.filter(e => e.id !== msg.docId);
+      await idbSet('automerge-doc-ids', filtered);
+      // Clean up active subscriptions for removed doc
+      const entry = docRegistry.get(msg.docId);
+      if (entry) {
+        for (const subId of entry.subscriptions.keys()) subIdToDocId.delete(subId);
+        if (entry.presence) entry.presence.stop();
+        docRegistry.delete(msg.docId);
+      }
+      (self as any).postMessage({ type: 'doc-list-updated', list: filtered } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.warn('[worker] remove-doc-from-list failed:', errMsg(err));
+    }
+  }
+
+  // --- Contact name mutations (IDB-backed) ---
+
+  if (msg.type === 'set-contact-name') {
+    try {
+      const { idbGet, idbSet } = await import('./idb-storage');
+      const names = (await idbGet<Record<string, string>>('contact-names')) ?? {};
+      names[msg.agentId] = msg.name;
+      await idbSet('contact-names', names);
+      (self as any).postMessage({ type: 'contact-names-updated', names } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.warn('[worker] set-contact-name failed:', errMsg(err));
+    }
+  }
+
+  if (msg.type === 'remove-contact-name') {
+    try {
+      const { idbGet, idbSet } = await import('./idb-storage');
+      const names = (await idbGet<Record<string, string>>('contact-names')) ?? {};
+      delete names[msg.agentId];
+      await idbSet('contact-names', names);
+      (self as any).postMessage({ type: 'contact-names-updated', names } satisfies WorkerToMain);
+    } catch (err: any) {
+      console.warn('[worker] remove-contact-name failed:', errMsg(err));
+    }
+  }
 
   // --- Keyhive operations (delegated to KeyhiveOps) ---
 
@@ -641,6 +729,18 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       khOps.registerDocMapping(msg.automergeDocId, msg.khDocId);
+      // Update IDB list entry with khDocId
+      try {
+        const { idbGet, idbSet } = await import('./idb-storage');
+        type StoredDocEntry = { id: string; [key: string]: any };
+        const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+        const entry = list.find(e => e.id === msg.automergeDocId);
+        if (entry && !entry.khDocId) {
+          entry.khDocId = msg.khDocId;
+          await idbSet('automerge-doc-ids', list);
+          (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
+        }
+      } catch { /* non-critical */ }
     } catch (err: any) {
       console.warn('[kh-register-doc-mapping] failed:', errMsg(err));
     }
@@ -650,6 +750,20 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.enableSharing(msg.automergeDocId);
+      // Update IDB list entry with new khDocId/sharingGroupId
+      try {
+        const { idbGet, idbSet } = await import('./idb-storage');
+        type StoredDocEntry = { id: string; [key: string]: any };
+        const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+        const entry = list.find(e => e.id === msg.automergeDocId);
+        if (entry) {
+          entry.khDocId = result.khDocId;
+          if (result.groupId) entry.sharingGroupId = result.groupId;
+          entry.encrypted = true;
+          await idbSet('automerge-doc-ids', list);
+          (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
+        }
+      } catch { /* non-critical */ }
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -660,7 +774,24 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.generateInvite(msg.docId, msg.role);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+
+      // Build invite URL and store record in IDB
+      const members = await khOps.getDocMembers(msg.docId);
+      const { encodeInvitePayload } = await import('./invite/invite-codec');
+      const seed = new Uint8Array(result.inviteKeyBytes);
+      const inviteUrl = `${appBaseUrl}#/invite/${msg.automergeDocId}/${msg.docType}/${encodeInvitePayload(seed)}`;
+      const { addInviteRecord } = await import('./invite-storage');
+      await addInviteRecord({
+        id: Date.now().toString(),
+        khDocId: msg.docId,
+        inviteUrl,
+        role: msg.role,
+        createdAt: Date.now(),
+        inviteSignerAgentId: result.inviteSignerAgentId,
+        baselineAgentIds: members.map((m: any) => m.agentId),
+      });
+
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { ...result, inviteUrl } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }

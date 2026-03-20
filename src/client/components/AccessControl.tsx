@@ -21,12 +21,10 @@ import {
 } from '../shared/keyhive-api';
 import {
   getInviteRecords,
-  addInviteRecord,
   removeInviteRecord,
   type InviteRecord,
 } from '../invite-storage';
 import { getContactName, setContactName } from '../contact-names';
-import { encodeInvitePayload } from '../invite/invite-codec';
 import QRCode from 'qrcode';
 
 /** Copy or share a URL, with fallbacks for mobile browsers (e.g. Firefox Android). */
@@ -166,7 +164,7 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
 
   const checkInvites = useCallback(async (currentMembers?: MemberInfo[]) => {
     if (!khDocId) return;
-    const records = getInviteRecords(khDocId);
+    const records = await getInviteRecords(khDocId);
     if (records.length === 0) { setInviteStatuses([]); return; }
     const current = currentMembers ?? await getDocMembers(khDocId);
     const statuses = records.map(r => {
@@ -267,30 +265,16 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
     if (!khDocId) return;
     setLoading(true);
     try {
-      const result = await generateInvite(khDocId, sharingGroupId || '', inviteRole);
+      const result = await generateInvite(khDocId, sharingGroupId || '', inviteRole, docId, docType ?? 'unknown');
       // Persist updated groupId if it was recreated
       if (result.groupId && result.groupId !== sharingGroupId) {
         onGroupIdChange?.(result.groupId);
       }
-      // Encode invite payload (seed only — claimer syncs from relay)
-      const seed = new Uint8Array(result.inviteKeyBytes);
-      const payloadB64 = encodeInvitePayload(seed);
-      const base = window.location.origin + window.location.pathname;
-      const inviteUrl = `${base}#/invite/${docId}/${docType ?? 'unknown'}/${payloadB64}`;
-
-      addInviteRecord({
-        id: Date.now().toString(),
-        khDocId,
-        inviteUrl,
-        role: inviteRole,
-        createdAt: Date.now(),
-        inviteSignerAgentId: result.inviteSignerAgentId,
-        baselineAgentIds: members.map(m => m.agentId),
-      });
+      // Worker built the URL and stored the invite record
       await checkInvites();
-      const copied = await shareOrCopy(inviteUrl);
+      const copied = await shareOrCopy(result.inviteUrl);
       if (copied) {
-        setCopiedUrl(inviteUrl);
+        setCopiedUrl(result.inviteUrl);
         setTimeout(() => setCopiedUrl(null), 1500);
       }
     } catch (err: any) {
@@ -300,9 +284,9 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
     }
   };
 
-  const handleDismissInvite = (id: string) => {
-    removeInviteRecord(id);
-    checkInvites();
+  const handleDismissInvite = async (id: string) => {
+    await removeInviteRecord(id);
+    await checkInvites();
   };
 
   if (!khDocId) {

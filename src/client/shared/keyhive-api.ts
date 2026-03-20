@@ -116,9 +116,9 @@ export function changeRole(agentId: string, docId: string, newRole: string): Pro
   return request('kh-change-role', { agentId, docId, newRole });
 }
 
-/** Generate an invite link for a document. Returns seed bytes for URL encoding. */
-export function generateInvite(docId: string, groupId: string, role: string): Promise<{ inviteKeyBytes: number[]; groupId: string; inviteSignerAgentId: string }> {
-  return request('kh-generate-invite', { docId, groupId, role });
+/** Generate an invite link for a document. The worker builds the URL and stores the invite record. */
+export function generateInvite(docId: string, groupId: string, role: string, automergeDocId: string, docType: string): Promise<{ inviteKeyBytes: number[]; groupId: string; inviteSignerAgentId: string; inviteUrl: string }> {
+  return request('kh-generate-invite', { docId, groupId, role, automergeDocId, docType });
 }
 
 /** Claim an invite by syncing keys from the relay using the invite seed. */

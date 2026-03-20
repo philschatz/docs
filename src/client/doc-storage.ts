@@ -14,6 +14,33 @@ interface DocEntry {
 
 const DOC_STORAGE_KEY = 'automerge-doc-ids';
 
+// --- Dispatch hook (injected from automerge.ts to avoid circular imports) ---
+
+type DocListDispatch = (type: 'add-doc-to-list' | 'remove-doc-from-list', docId: string, metadata?: Partial<DocEntry>) => void;
+let dispatch: DocListDispatch | null = null;
+
+export function setDocListDispatch(fn: DocListDispatch): void {
+  dispatch = fn;
+}
+
+// --- Listener mechanism ---
+
+type DocListListener = (list: DocEntry[]) => void;
+const listeners = new Set<DocListListener>();
+
+export function onDocListUpdated(fn: DocListListener): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+/** Called by automerge.ts when the worker pushes a new doc list. */
+export function applyDocListFromWorker(list: DocEntry[]): void {
+  saveDocList(list);
+  for (const fn of listeners) fn(list);
+}
+
+// --- Core storage (reads/writes localStorage as sync cache) ---
+
 export function getDocList(): DocEntry[] {
   try {
     const raw = JSON.parse(localStorage.getItem(DOC_STORAGE_KEY) || '[]');
@@ -43,19 +70,13 @@ export function addDocId(id: string, cache?: Omit<DocEntry, 'id'>) {
     list.unshift({ id, ...cache });
   }
   saveDocList(list);
+  dispatch?.('add-doc-to-list', id, cache);
 }
 
 export function removeDocId(id: string) {
   const list = getDocList().filter(e => e.id !== id);
   saveDocList(list);
-}
-
-export function touchDoc(id: string) {
-  const list = getDocList();
-  const idx = list.findIndex(e => e.id === id);
-  if (idx <= 0) return; // not found or already first
-  list.unshift(list.splice(idx, 1)[0]);
-  saveDocList(list);
+  dispatch?.('remove-doc-from-list', id);
 }
 
 export function getDocEntry(id: string): DocEntry | undefined {

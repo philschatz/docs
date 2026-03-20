@@ -14,7 +14,7 @@ const localStorageMock = {
 };
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
 
-import { getDocList, addDocId, removeDocId, updateDocCache, touchDoc } from './doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, applyDocListFromWorker, onDocListUpdated } from './doc-storage';
 
 beforeEach(() => {
   store = {};
@@ -111,25 +111,22 @@ describe('updateDocCache', () => {
   });
 });
 
-describe('touchDoc', () => {
-  it('moves doc to front', () => {
-    addDocId('doc-1');
-    addDocId('doc-2');
-    addDocId('doc-3');
-    touchDoc('doc-1');
-    expect(getDocList().map(e => e.id)).toEqual(['doc-1', 'doc-3', 'doc-2']);
+describe('applyDocListFromWorker', () => {
+  it('writes list to localStorage and notifies listeners', () => {
+    const listener = jest.fn();
+    const unsub = onDocListUpdated(listener);
+    const list = [{ id: 'doc-a', type: 'Calendar' as const, name: 'Work' }];
+    applyDocListFromWorker(list);
+    expect(getDocList()).toEqual(list);
+    expect(listener).toHaveBeenCalledWith(list);
+    unsub();
   });
 
-  it('does nothing if doc is already first', () => {
-    addDocId('doc-1');
-    addDocId('doc-2');
-    touchDoc('doc-2');
-    expect(getDocList().map(e => e.id)).toEqual(['doc-2', 'doc-1']);
-  });
-
-  it('does nothing for non-existent doc', () => {
-    addDocId('doc-1');
-    touchDoc('doc-999');
-    expect(getDocList().map(e => e.id)).toEqual(['doc-1']);
+  it('unsubscribe stops notifications', () => {
+    const listener = jest.fn();
+    const unsub = onDocListUpdated(listener);
+    unsub();
+    applyDocListFromWorker([{ id: 'doc-b' }]);
+    expect(listener).not.toHaveBeenCalled();
   });
 });

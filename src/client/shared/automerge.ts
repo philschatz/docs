@@ -8,7 +8,9 @@ export type { DocHandle, DocumentId, PeerId } from '@automerge/automerge-repo';
 export type { PeerState, PresenceState } from '@automerge/automerge-repo';
 import type { WorkerToMain } from '../automerge-worker';
 import { initKeyhiveApi, handleKeyhiveResponse, getMyAccess, registerDocMapping } from './keyhive-api';
-import { getDocEntry, getDocList } from '../doc-storage';
+import { getDocEntry, getDocList, setDocListDispatch, applyDocListFromWorker } from '../doc-storage';
+import { setContactNamesDispatch, applyContactNamesFromWorker } from '../contact-names';
+import { idbSet } from '../idb-storage';
 
 // --- Worker setup ---
 
@@ -50,15 +52,47 @@ export const repo = new Repo({
 // Initialize keyhive API with worker reference
 initKeyhiveApi(worker);
 
-// Send the other port to the worker along with doc list
-worker.postMessage(
-  {
-    type: 'init',
-    docList: getDocList().map(e => ({ id: e.id, encrypted: e.encrypted })),
-    port: channel.port2,
-  },
-  [channel.port2],
-);
+// --- Wire up dispatch hooks (avoids circular imports) ---
+setDocListDispatch((type, docId, metadata) => {
+  worker.postMessage({ type, docId, ...metadata });
+});
+setContactNamesDispatch((type, agentId, name) => {
+  worker.postMessage({ type, agentId, ...(name !== undefined ? { name } : {}) });
+});
+
+// --- Seed IDB from localStorage, then send init to worker ---
+// Must await IDB writes so the worker sees the data when it reads IDB on init.
+(async () => {
+  try {
+    // Migrate contact names
+    const raw = localStorage.getItem('contact-names');
+    if (raw) {
+      const names = JSON.parse(raw) as Record<string, string>;
+      if (names && typeof names === 'object' && Object.keys(names).length > 0) {
+        await idbSet('contact-names', names);
+      }
+      localStorage.removeItem('contact-names');
+    }
+  } catch { /* ignore */ }
+
+  try {
+    // Seed doc list
+    const docList = getDocList();
+    if (docList.length > 0) {
+      await idbSet('automerge-doc-ids', docList);
+    }
+  } catch { /* ignore */ }
+
+  // Send the init message to the worker (IDB is now populated)
+  worker.postMessage(
+    {
+      type: 'init',
+      appBaseUrl: window.location.origin + window.location.pathname,
+      port: channel.port2,
+    },
+    [channel.port2],
+  );
+})();
 
 // --- Repo network ready promise ---
 // Resolves either when the worker sends 'ready' OR when the MessageChannel peer connects.
@@ -212,6 +246,10 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
     if (msg.repo === 'secure') wsSecureConnected = msg.connected;
     else wsInsecureConnected = msg.connected;
     for (const fn of wsStatusListeners) fn(msg.repo, msg.connected);
+  } else if (msg.type === 'doc-list-updated') {
+    applyDocListFromWorker(msg.list as any);
+  } else if (msg.type === 'contact-names-updated') {
+    applyContactNamesFromWorker(msg.names);
   } else if (msg.type === 'kh-result') {
     handleKeyhiveResponse(msg);
   } else {

@@ -3,7 +3,7 @@ import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import type { PeerState } from '../shared/automerge';
 import { openDoc, subscribeQuery, updateDoc, queryDoc, deepAssign } from '../worker-api';
-import { getDocEntry } from '../doc-storage';
+import { getDocEntry, getDocList } from '../doc-storage';
 import { initPresence, type PresenceState } from '../shared/presence';
 import { EditorTitleBar } from '../shared/EditorTitleBar';
 import type { CalendarEvent } from './schema';
@@ -28,11 +28,7 @@ interface LoadedCalendar {
 }
 
 function getSavedIds(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem('automerge-doc-ids') || '[]');
-    if (!Array.isArray(raw)) return [];
-    return raw.map((entry: any) => entry.id).filter(Boolean);
-  } catch { return []; }
+  return getDocList().map(e => e.id);
 }
 
 const defaultTZ = Intl.DateTimeFormat().resolvedOptions().timeZone;

@@ -11,7 +11,7 @@ import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(relativeTimePlugin);
 import { a1ToInternal } from '@/datagrid/helpers';
-import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry } from '@/doc-storage';
+import { getDocList, addDocId, removeDocId, updateDocCache, getDocEntry, onDocListUpdated } from '@/doc-storage';
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_TIME__: string;
@@ -27,6 +27,7 @@ interface DocEntry {
   lastUpdated: string | null;
   loading: boolean;
   peers: string[];
+  encrypted?: boolean;
 }
 
 function relativeTime(ts: string | null): string {
@@ -57,6 +58,7 @@ function initialEntries(): DocEntry[] {
     lastUpdated: null,
     loading: true,
     peers: [],
+    encrypted: e.encrypted,
   }));
 }
 
@@ -79,6 +81,28 @@ export function Home({ path }: { path?: string }) {
   const repoPeers = usePeerList();
   const [createSecure, setCreateSecure] = useState(true);
 
+  // Subscribe to worker-pushed doc list updates (IDB → localStorage cache)
+  useEffect(() => {
+    return onDocListUpdated((list) => {
+      setEntries((prev) => {
+        const existing = new Map(prev.map((e) => [e.documentId, e]));
+        return list.map(
+          (e) =>
+            existing.get(e.id) ?? {
+              documentId: e.id,
+              type: (e.type || 'unknown') as DocType,
+              name: e.name || e.id.slice(0, 8),
+              count: null,
+              lastUpdated: null,
+              loading: true,
+              peers: [],
+              encrypted: e.encrypted,
+            },
+        );
+      });
+    });
+  }, []);
+
   // Subscribe to doc summaries from the worker
   const docIdKey = entries.map(e => e.documentId).join(',');
   useEffect(() => {
@@ -98,11 +122,13 @@ export function Home({ path }: { path?: string }) {
 
   // Clean up invite records for documents no longer stored locally
   useEffect(() => {
-    const docList = getDocList();
-    const knownKhDocIds = new Set(docList.map(d => d.khDocId).filter(Boolean));
-    for (const r of getAllInviteRecords()) {
-      if (!knownKhDocIds.has(r.khDocId)) removeInviteRecord(r.id);
-    }
+    (async () => {
+      const docList = getDocList();
+      const knownKhDocIds = new Set(docList.map(d => d.khDocId).filter(Boolean));
+      for (const r of await getAllInviteRecords()) {
+        if (!knownKhDocIds.has(r.khDocId)) await removeInviteRecord(r.id);
+      }
+    })();
   }, []);
 
   const reloadEntries = useCallback(() => {
@@ -308,7 +334,7 @@ export function Home({ path }: { path?: string }) {
     const label = entry.type === 'Calendar' ? 'calendar' : entry.type === 'TaskList' ? 'task list' : entry.type === 'DataGrid' ? 'spreadsheet' : 'document';
     if (!confirm(`Delete "${entry.name || 'Untitled'}" ${label}?`)) return;
     const storedEntry = getDocEntry(entry.documentId);
-    if (storedEntry?.khDocId) removeInviteRecordsForDoc(storedEntry.khDocId);
+    if (storedEntry?.khDocId) await removeInviteRecordsForDoc(storedEntry.khDocId);
     removeDocId(entry.documentId);
     setMessage(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`);
     setError('');
@@ -489,8 +515,8 @@ export function Home({ path }: { path?: string }) {
               key={entry.documentId}
               className="flex items-center gap-2 py-1 px-1 flex-nowrap border-b border-border"
             >
-              <span className="material-symbols-outlined" style={{ width: '1rem', textAlign: 'center', color: '#999', fontSize: '0.9rem' }} title={getDocEntry(entry.documentId)?.encrypted ? 'Encrypted' : 'Unencrypted'}>
-                {getDocEntry(entry.documentId)?.encrypted ? 'lock' : 'visibility'}
+              <span className="material-symbols-outlined" style={{ width: '1rem', textAlign: 'center', color: '#999', fontSize: '0.9rem' }} title={entry.encrypted ? 'Encrypted' : 'Unencrypted'}>
+                {entry.encrypted ? 'lock' : 'visibility'}
               </span>
               <span className="material-symbols-outlined" style={{ width: '1.2rem', textAlign: 'center', color: '#666' }}>{icon}</span>
               <a href={viewPath} className="text-sm flex-1 hover:underline flex items-center gap-1">
