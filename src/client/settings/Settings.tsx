@@ -213,6 +213,67 @@ export function Settings({ path }: { path?: string }) {
             ))}
           </div>
         )}
+
+        {/* Link a device */}
+        <div className="mt-4">
+          <h3 className="text-sm font-semibold mb-2">Link a Device</h3>
+
+          {/* Step 1: Show your contact card */}
+          <div className="mb-3">
+            <p className="text-xs text-muted-foreground mb-1">
+              Share your contact card with the other device:
+            </p>
+            <Button size="sm" variant="outline" onClick={handleShowContactCard}>
+              Show contact card
+            </Button>
+            {contactCard && (
+              <div className="mt-2 space-y-2">
+                {linkDeviceUrl && (
+                  <div className="space-y-2">
+                    <div className="flex justify-center">
+                      <QRCodeDisplay url={linkDeviceUrl} />
+                    </div>
+                    <input
+                      className="flex-1 text-xs p-2 rounded border border-border font-mono bg-muted w-full"
+                      value={linkDeviceUrl}
+                      readOnly
+                      onClick={(e: any) => e.currentTarget.select()}
+                    />
+                  </div>
+                )}
+                <div className="flex items-start gap-2">
+                  <textarea
+                    className="flex-1 text-xs bg-muted p-2 rounded border border-border font-mono resize-none"
+                    rows={4}
+                    value={contactCard}
+                    readOnly
+                    onClick={(e: any) => e.currentTarget.select()}
+                  />
+                  <Button size="sm" variant="outline" onClick={copyContactCard}>Copy</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Step 2: Paste the other device's contact card */}
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">
+              Paste the other device's contact card:
+            </p>
+            <div className="flex items-start gap-2">
+              <textarea
+                className="flex-1 text-xs p-2 rounded border border-border font-mono resize-none"
+                rows={4}
+                value={linkInput}
+                onInput={(e: any) => setLinkInput(e.currentTarget.value)}
+                placeholder="Paste contact card JSON here..."
+              />
+              <Button size="sm" onClick={handleLinkDevice} disabled={loading || !linkInput.trim()}>
+                Link
+              </Button>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Share me with a friend */}
@@ -255,67 +316,6 @@ export function Settings({ path }: { path?: string }) {
           <Button size="sm" onClick={handleNavigateUrl} disabled={!inviteUrl.trim()}>
             Go
           </Button>
-        </div>
-      </section>
-
-      {/* Link device */}
-      <section className="mb-6">
-        <h2 className="text-lg font-semibold mb-2">Link a Device</h2>
-
-        {/* Step 1: Show your contact card */}
-        <div className="mb-3">
-          <p className="text-xs text-muted-foreground mb-1">
-            Share your contact card with the other device:
-          </p>
-          <Button size="sm" variant="outline" onClick={handleShowContactCard}>
-            Show contact card
-          </Button>
-          {contactCard && (
-            <div className="mt-2 space-y-2">
-              {linkDeviceUrl && (
-                <div className="space-y-2">
-                  <div className="flex justify-center">
-                    <QRCodeDisplay url={linkDeviceUrl} />
-                  </div>
-                  <input
-                    className="flex-1 text-xs p-2 rounded border border-border font-mono bg-muted w-full"
-                    value={linkDeviceUrl}
-                    readOnly
-                    onClick={(e: any) => e.currentTarget.select()}
-                  />
-                </div>
-              )}
-              <div className="flex items-start gap-2">
-                <textarea
-                  className="flex-1 text-xs bg-muted p-2 rounded border border-border font-mono resize-none"
-                  rows={4}
-                  value={contactCard}
-                  readOnly
-                  onClick={(e: any) => e.currentTarget.select()}
-                />
-                <Button size="sm" variant="outline" onClick={copyContactCard}>Copy</Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Step 2: Paste the other device's contact card */}
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">
-            Paste the other device's contact card:
-          </p>
-          <div className="flex items-start gap-2">
-            <textarea
-              className="flex-1 text-xs p-2 rounded border border-border font-mono resize-none"
-              rows={4}
-              value={linkInput}
-              onInput={(e: any) => setLinkInput(e.currentTarget.value)}
-              placeholder="Paste contact card JSON here..."
-            />
-            <Button size="sm" onClick={handleLinkDevice} disabled={loading || !linkInput.trim()}>
-              Link
-            </Button>
-          </div>
         </div>
       </section>
 
