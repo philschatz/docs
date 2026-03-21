@@ -14,10 +14,13 @@ import {
   type DeviceInfo,
 } from '../shared/keyhive-api';
 import { idbGet, idbSet } from '../idb-storage';
+import QRCode from 'qrcode';
+import { buildLinkDeviceUrl } from './LinkDevicePage';
 export function Settings({ path }: { path?: string }) {
   const [identity, setIdentity] = useState<IdentityInfo | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);
+  const [qrSvg, setQrSvg] = useState('');
   const [linkInput, setLinkInput] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [message, setMessage] = useState('');
@@ -45,6 +48,9 @@ export function Settings({ path }: { path?: string }) {
     try {
       const card = await getContactCard();
       setContactCard(card);
+      const url = buildLinkDeviceUrl(card);
+      const svg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 200 });
+      setQrSvg(svg);
     } catch (err: any) {
       setError(err.message);
     }
@@ -232,15 +238,18 @@ export function Settings({ path }: { path?: string }) {
             Show contact card
           </Button>
           {contactCard && (
-            <div className="mt-2 flex items-start gap-2">
-              <textarea
-                className="flex-1 text-xs bg-muted p-2 rounded border border-border font-mono resize-none"
-                rows={4}
-                value={contactCard}
-                readOnly
-                onClick={(e: any) => e.currentTarget.select()}
-              />
-              <Button size="sm" variant="outline" onClick={copyContactCard}>Copy</Button>
+            <div className="mt-2 space-y-2">
+              {qrSvg && <div className="flex justify-center" dangerouslySetInnerHTML={{ __html: qrSvg }} />}
+              <div className="flex items-start gap-2">
+                <textarea
+                  className="flex-1 text-xs bg-muted p-2 rounded border border-border font-mono resize-none"
+                  rows={4}
+                  value={contactCard}
+                  readOnly
+                  onClick={(e: any) => e.currentTarget.select()}
+                />
+                <Button size="sm" variant="outline" onClick={copyContactCard}>Copy</Button>
+              </div>
             </div>
           )}
         </div>

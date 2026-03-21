@@ -6,6 +6,7 @@ import { Tasks } from './tasks/Tasks';
 import { SourceViewer } from './source/SourceViewer';
 import { DataGrid } from './datagrid/DataGrid';
 import { Settings } from './settings/Settings';
+import { LinkDevicePage } from './settings/LinkDevicePage';
 import { InvitePage } from './invite/InvitePage';
 import { hashHistory } from './hash-history';
 import { UpdateBanner } from './components/UpdateBanner';
@@ -16,6 +17,7 @@ export function App() {
     <Router history={hashHistory}>
       <Home path="/" />
       <Settings path="/settings" />
+      <LinkDevicePage path="/link-device/:cardData" />
       <InvitePage path="/invite/:docId/:docType/:inviteKey" />
       <InvitePage path="/invite/:docId/:inviteKey" />
       <AllCalendars path="/calendars/" />
