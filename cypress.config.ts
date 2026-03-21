@@ -25,6 +25,8 @@ export default defineConfig({
         // renderer heap limit (~4 GB). Raise it to prevent OOM crashes.
         if (browser.family === 'chromium') {
           launchOptions.args.push('--js-flags=--max-old-space-size=8192');
+          launchOptions.args.push('--no-sandbox');
+          launchOptions.args.push('--disable-dev-shm-usage');
         }
         return launchOptions;
       });
