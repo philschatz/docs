@@ -22,7 +22,7 @@ import {
 } from '../shared/keyhive-api';
 import type { InviteRecord } from '../invite-storage';
 import { getContactName, setContactName } from '../contact-names';
-import QRCode from 'qrcode';
+import { QRCodeDisplay } from '@/components/ui/qr-code';
 
 /** Copy or share a URL, with fallbacks for mobile browsers (e.g. Firefox Android). */
 async function shareOrCopy(url: string): Promise<boolean> {
@@ -58,14 +58,6 @@ async function shareOrCopy(url: string): Promise<boolean> {
   }
 }
 
-function InviteQR({ url }: { url: string }) {
-  const [svg, setSvg] = useState('');
-  useEffect(() => {
-    QRCode.toString(url, { type: 'svg', margin: 1, width: 160 }).then(setSvg).catch(() => {});
-  }, [url]);
-  if (!svg) return null;
-  return <div className="mt-2 flex justify-center" dangerouslySetInnerHTML={{ __html: svg }} />;
-}
 
 function EditableName({ agentId, suffix }: { agentId: string; suffix?: any }) {
   const [editing, setEditing] = useState(false);
@@ -456,7 +448,7 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
                               </Tooltip>
                             </TooltipProvider>
                           </div>
-                          <InviteQR url={record.inviteUrl} />
+                          <QRCodeDisplay url={record.inviteUrl} size={160} className="mt-2 flex justify-center" />
                         </>
                       )}
                     </div>

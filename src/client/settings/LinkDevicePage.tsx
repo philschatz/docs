@@ -11,8 +11,8 @@
 
 import { useState, useCallback } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
+import { QRCodeDisplay } from '@/components/ui/qr-code';
 import { receiveContactCard, getContactCard } from '../shared/keyhive-api';
-import QRCode from 'qrcode';
 import { deflate, inflate } from 'pako';
 
 interface LinkDevicePageProps {
@@ -53,7 +53,6 @@ export function LinkDevicePage({ cardData }: LinkDevicePageProps) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [myQrSvg, setMyQrSvg] = useState('');
   const [myCardUrl, setMyCardUrl] = useState('');
 
   const doLink = useCallback(async () => {
@@ -73,10 +72,7 @@ export function LinkDevicePage({ cardData }: LinkDevicePageProps) {
 
       setStatus('Generating your contact card...');
       const myCard = await getContactCard();
-      const url = buildLinkDeviceUrl(myCard);
-      setMyCardUrl(url);
-      const svg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 200 });
-      setMyQrSvg(svg);
+      setMyCardUrl(buildLinkDeviceUrl(myCard));
 
       setDone(true);
       setStatus('Device linked! Now scan this QR code from the other device to complete linking.');
@@ -120,23 +116,20 @@ export function LinkDevicePage({ cardData }: LinkDevicePageProps) {
                 <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 16 }}>check_circle</span>
                 Their device linked to yours
               </p>
-              {myQrSvg && (
+              {myCardUrl && (
                 <div className="mb-4">
                   <p className="text-xs text-muted-foreground mb-2">
                     Scan this from the other device to link yours to theirs:
                   </p>
-                  <div className="flex justify-center" dangerouslySetInnerHTML={{ __html: myQrSvg }} />
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      className="flex-1 text-xs p-2 rounded border border-border font-mono bg-muted"
-                      value={myCardUrl}
-                      readOnly
-                      onClick={(e: any) => e.currentTarget.select()}
-                    />
-                    <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(myCardUrl)}>
-                      Copy
-                    </Button>
+                  <div className="flex justify-center">
+                    <QRCodeDisplay url={myCardUrl} />
                   </div>
+                  <input
+                    className="mt-2 text-xs p-2 rounded border border-border font-mono bg-muted w-full"
+                    value={myCardUrl}
+                    readOnly
+                    onClick={(e: any) => e.currentTarget.select()}
+                  />
                 </div>
               )}
               <Button variant="outline" onClick={() => { window.location.hash = '/settings'; }}>
