@@ -55,12 +55,16 @@ export async function loadOrCreateSigner(db: StorageAdapterInterface): Promise<{
   let keyPair: CryptoKeyPair;
   let signer: Signer;
 
+  console.log('[keyhive] db.load key pair...');
   const maybeKeyPairBytes = await db.load([ACTIVE_DB_KEY]);
   if (maybeKeyPairBytes) {
+    console.log('[keyhive] deserializing existing key pair...');
     keyPair = await deserializeKeyPair(maybeKeyPairBytes);
+    console.log('[keyhive] creating signer from existing key...');
     signer = await Signer.webCryptoSigner(keyPair);
   } else {
     try {
+      console.log('[keyhive] generating new Ed25519 key pair...');
       keyPair = await crypto.subtle.generateKey(
         {
           name: "Ed25519",
@@ -68,13 +72,16 @@ export async function loadOrCreateSigner(db: StorageAdapterInterface): Promise<{
         true,
         ["sign", "verify"]
       );
+      console.log('[keyhive] key pair generated, creating signer...');
       signer = await Signer.webCryptoSigner(keyPair);
+      console.log('[keyhive] storing key pair...');
       await storeActiveKeyPair(keyPair, db);
     } catch (error) {
       console.error("[AMRepoKeyhive] Error creating signer: ", error);
       throw error;
     }
   }
+  console.log('[keyhive] signer ready');
   return {
     keyPair: keyPair,
     signer: signer,
