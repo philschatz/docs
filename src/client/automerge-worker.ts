@@ -386,7 +386,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         // No local entry — check if our keyhive already knows about this doc
         // (e.g. we were added as a member by someone else)
         try {
-          const khDocId = khBridge.docIdFromAutomergeUrl(msg.docId as any);
+          const automergeUrl = `automerge:${msg.docId}`;
+          const khDocId = khBridge.docIdFromAutomergeUrl(automergeUrl as any);
           const doc = await khOps.kh.getDocument(khDocId);
           if (doc) {
             const khDocIdB64 = bytesToBase64(doc.doc_id.toBytes());
@@ -394,8 +395,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
             khIntegration.networkAdapter.registerDoc(msg.docId, khDocId);
             setDocRepo(msg.docId, 'secure');
           }
-        } catch {
-          // Not a keyhive-known doc — fall through to insecure
+        } catch (err) {
+          console.warn('[worker] Failed to check keyhive for doc:', errMsg(err));
         }
       }
       progress(10, 'Finding document\u2026');
