@@ -1,37 +1,85 @@
-/**
- * Lightweight imperative toast — no context or provider needed.
- * Usage: showToast('Link copied to clipboard')
- */
+import * as ToastPrimitive from "@radix-ui/react-toast";
+import { useState, useCallback, useRef } from "preact/hooks";
+import { cn } from "@/lib/utils";
 
-let container: HTMLDivElement | null = null;
+/* ------------------------------------------------------------------ */
+/*  Imperative API — call from anywhere, no hooks required            */
+/* ------------------------------------------------------------------ */
 
-function getContainer(): HTMLDivElement {
-  if (!container) {
-    container = document.createElement('div');
-    container.style.cssText =
-      'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;';
-    document.body.appendChild(container);
-  }
-  return container;
+type ToastFn = (message: string) => void;
+let _show: ToastFn | null = null;
+
+/** Register the callback (called once by <Toaster>). */
+export function _registerShow(fn: ToastFn) {
+  _show = fn;
 }
 
-export function showToast(message: string, durationMs = 2000) {
-  const el = document.createElement('div');
-  el.textContent = message;
-  el.style.cssText =
-    'background:var(--color-popover,#1f1f1f);color:var(--color-popover-foreground,#fff);padding:8px 16px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.15);opacity:0;transition:opacity .15s ease;pointer-events:auto;';
-  getContainer().appendChild(el);
+/** Show a toast from any module. Requires <Toaster> mounted in the tree. */
+export function showToast(message: string) {
+  if (_show) _show(message);
+}
 
-  // fade in
-  requestAnimationFrame(() => {
-    el.style.opacity = '1';
-  });
+/* ------------------------------------------------------------------ */
+/*  Declarative component — mount once in App                         */
+/* ------------------------------------------------------------------ */
 
-  // fade out & remove
-  setTimeout(() => {
-    el.style.opacity = '0';
-    el.addEventListener('transitionend', () => el.remove(), { once: true });
-    // safety net if transitionend doesn't fire
-    setTimeout(() => el.remove(), 300);
-  }, durationMs);
+interface ToastItem {
+  id: number;
+  message: string;
+}
+
+let nextId = 0;
+
+export function Toaster() {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const durMs = useRef(2000);
+
+  const add = useCallback((message: string) => {
+    setToasts((prev) => [...prev, { id: nextId++, message }]);
+  }, []);
+
+  // Register the imperative bridge once
+  _registerShow(add);
+
+  const remove = (id: number) =>
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  return (
+    <ToastPrimitive.Provider duration={durMs.current}>
+      {toasts.map((t) => (
+        <ToastPrimitive.Root
+          key={t.id}
+          className={cn(
+            "group pointer-events-auto relative flex w-full items-center justify-between gap-2 overflow-hidden",
+            "rounded-lg border border-border bg-background px-4 py-3 shadow-lg",
+            "data-[state=open]:animate-[slideIn_150ms_ease-out]",
+            "data-[state=closed]:animate-[fadeOut_100ms_ease-in]",
+            "data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)]",
+            "data-[swipe=cancel]:translate-x-0 data-[swipe=cancel]:transition-transform",
+            "data-[swipe=end]:animate-[swipeOut_100ms_ease-out]",
+          )}
+          onOpenChange={(open: boolean) => {
+            if (!open) remove(t.id);
+          }}
+        >
+          <ToastPrimitive.Description className="text-sm text-foreground">
+            {t.message}
+          </ToastPrimitive.Description>
+          <ToastPrimitive.Close
+            className="ml-2 shrink-0 rounded-md p-1 opacity-50 hover:opacity-100 focus:outline-none"
+            aria-label="Close"
+          >
+            <span className="text-xs">&times;</span>
+          </ToastPrimitive.Close>
+        </ToastPrimitive.Root>
+      ))}
+
+      <ToastPrimitive.Viewport
+        className={cn(
+          "fixed bottom-4 left-1/2 z-[100] flex -translate-x-1/2 flex-col gap-2",
+          "w-auto max-w-[min(420px,calc(100vw-32px))]",
+        )}
+      />
+    </ToastPrimitive.Provider>
+  );
 }

@@ -11,10 +11,12 @@ import { AddFriendPage } from './settings/AddFriendPage';
 import { InvitePage } from './invite/InvitePage';
 import { hashHistory } from './hash-history';
 import { UpdateBanner } from './components/UpdateBanner';
+import { Toaster } from './components/ui/toast';
 export function App() {
   return (
     <>
     <UpdateBanner />
+    <Toaster />
     <Router history={hashHistory}>
       <Home path="/" />
       <Settings path="/settings" />
