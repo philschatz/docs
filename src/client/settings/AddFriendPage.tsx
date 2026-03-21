@@ -13,24 +13,39 @@ import { useState, useCallback } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
 import { receiveContactCard } from '../shared/keyhive-api';
 import { setContactName } from '../contact-names';
+import { deflate, inflate } from 'pako';
 
 interface AddFriendPageProps {
   cardData?: string;
   path?: string;
 }
 
-function decodeCardFromUrl(b64url: string): string {
+function b64urlToBytes(b64url: string): Uint8Array {
   const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-  return decodeURIComponent(atob(b64).split('').map(
-    c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-  ).join(''));
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-export function encodeCardForUrl(cardJson: string): string {
-  const bytes = new TextEncoder().encode(cardJson);
+function bytesToB64url(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeCardFromUrl(b64url: string): string {
+  const bytes = b64urlToBytes(b64url);
+  try {
+    return new TextDecoder().decode(inflate(bytes));
+  } catch {
+    return new TextDecoder().decode(bytes);
+  }
+}
+
+export function encodeCardForUrl(cardJson: string): string {
+  const compressed = deflate(new TextEncoder().encode(cardJson));
+  return bytesToB64url(compressed);
 }
 
 export function buildAddFriendUrl(cardJson: string): string {

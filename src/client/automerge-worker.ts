@@ -29,7 +29,7 @@ export type MainToWorker =
   // Keyhive operations
   | { type: 'kh-get-identity'; id: number }
   | { type: 'kh-get-contact-card'; id: number }
-  | { type: 'kh-receive-contact-card'; id: number; cardJson: string }
+  | { type: 'kh-receive-contact-card'; id: number; cardJson: string; isDevice?: boolean }
   | { type: 'kh-get-doc-members'; id: number; khDocId: string }
   | { type: 'kh-get-my-access'; id: number; khDocId: string }
   | { type: 'kh-add-member'; id: number; agentId: string; docId: string; role: string }
@@ -686,6 +686,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.receiveContactCard(msg.cardJson);
+      if (msg.isDevice) {
+        const { idbGet, idbSet } = await import('./idb-storage');
+        const devices = (await idbGet<string[]>('linked-devices')) ?? [];
+        if (!devices.includes(result.agentId)) {
+          devices.push(result.agentId);
+          await idbSet('linked-devices', devices);
+        }
+      }
       (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -727,7 +735,16 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
   if (msg.type === 'kh-list-devices') {
     try {
       if (!khOps) throw new Error('Keyhive not available');
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: [] } satisfies WorkerToMain);
+      const { idbGet } = await import('./idb-storage');
+      const linkedIds = (await idbGet<string[]>('linked-devices')) ?? [];
+      const myId = khOps.getIdentity().deviceId;
+      const devices: { agentId: string; role: string; isMe?: boolean }[] = [
+        { agentId: myId, role: 'owner', isMe: true },
+      ];
+      for (const id of linkedIds) {
+        devices.push({ agentId: id, role: 'linked', isMe: false });
+      }
+      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: devices } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }

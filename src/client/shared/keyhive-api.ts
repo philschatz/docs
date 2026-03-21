@@ -78,8 +78,8 @@ export function getContactCard(): Promise<string> {
 }
 
 /** Receive a contact card from another device/user. Returns the agent ID. */
-export function receiveContactCard(cardJson: string): Promise<{ agentId: string }> {
-  return request('kh-receive-contact-card', { cardJson });
+export function receiveContactCard(cardJson: string, opts?: { isDevice?: boolean }): Promise<{ agentId: string }> {
+  return request('kh-receive-contact-card', { cardJson, isDevice: opts?.isDevice });
 }
 
 /** Get known contacts across all documents, excluding members of a specific doc. */

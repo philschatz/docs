@@ -77,7 +77,7 @@ export function Settings({ path }: { path?: string }) {
     if (!linkInput.trim()) return;
     setLoading(true);
     try {
-      await receiveContactCard(linkInput.trim());
+      await receiveContactCard(linkInput.trim(), { isDevice: true });
       setMessage('Device linked successfully');
       setLinkInput('');
       await refresh();

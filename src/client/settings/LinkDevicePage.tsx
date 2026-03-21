@@ -13,24 +13,41 @@ import { useState, useCallback } from 'preact/hooks';
 import { Button } from '@/components/ui/button';
 import { receiveContactCard, getContactCard } from '../shared/keyhive-api';
 import QRCode from 'qrcode';
+import { deflate, inflate } from 'pako';
 
 interface LinkDevicePageProps {
   cardData?: string;
   path?: string;
 }
 
-function decodeCardFromUrl(b64url: string): string {
+function b64urlToBytes(b64url: string): Uint8Array {
   const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-  return decodeURIComponent(atob(b64).split('').map(
-    c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-  ).join(''));
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-function encodeCardForUrl(cardJson: string): string {
-  const bytes = new TextEncoder().encode(cardJson);
+function bytesToB64url(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeCardFromUrl(b64url: string): string {
+  const bytes = b64urlToBytes(b64url);
+  try {
+    // Try decompressing first (new format)
+    return new TextDecoder().decode(inflate(bytes));
+  } catch {
+    // Fall back to uncompressed (old format)
+    return new TextDecoder().decode(bytes);
+  }
+}
+
+function encodeCardForUrl(cardJson: string): string {
+  const compressed = deflate(new TextEncoder().encode(cardJson));
+  return bytesToB64url(compressed);
 }
 
 export function buildLinkDeviceUrl(cardJson: string): string {
@@ -59,7 +76,7 @@ export function LinkDevicePage({ cardData }: LinkDevicePageProps) {
       const cardJson = decodeCardFromUrl(cardData);
 
       setStatus('Linking device...');
-      await receiveContactCard(cardJson);
+      await receiveContactCard(cardJson, { isDevice: true });
 
       setStatus('Generating your contact card...');
       const myCard = await getContactCard();
