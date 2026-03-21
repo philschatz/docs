@@ -1,13 +1,9 @@
-import '@automerge/automerge-subduction'; // Initialize subduction WASM before Repo construction
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { Repo } from '@automerge/automerge-repo';
-import { MessageChannelNetworkAdapter } from '@automerge/automerge-repo-network-messagechannel';
-export * as Automerge from '@automerge/automerge';
-export { Presence } from '@automerge/automerge-repo';
+export type { Presence } from '@automerge/automerge-repo';
 export type { DocHandle, DocumentId, PeerId } from '@automerge/automerge-repo';
 export type { PeerState, PresenceState } from '@automerge/automerge-repo';
 import type { WorkerToMain } from '../automerge-worker';
-import { initKeyhiveApi, handleKeyhiveResponse, getMyAccess, registerDocMapping } from './keyhive-api';
+import { initKeyhiveApi, handleKeyhiveResponse, registerDocMapping } from './keyhive-api';
 import { getDocEntry, getDocList, setDocListDispatch, applyDocListFromWorker } from '../doc-storage';
 import { setContactNamesDispatch, applyContactNamesFromWorker } from '../contact-names';
 import { idbSet } from '../idb-storage';
@@ -26,28 +22,6 @@ const worker = new Worker(
   new URL('../automerge-worker.ts', import.meta.url),
   { type: 'module' },
 );
-
-const channel = new MessageChannel();
-
-// Main-thread repo: ephemeral, no storage, syncs with worker via MessageChannel.
-// The subduction-tagged automerge-repo requires a subduction instance — provide a no-op stub.
-const noopSubduction = {
-  storage: {},
-  removeSedimentree() {},
-  connectDiscover() {},
-  disconnectAll() {},
-  disconnectFromPeer() {},
-  syncAll() { return Promise.resolve({ entries() { return []; } }); },
-  syncWithAllPeers() { return Promise.resolve(new Map()); },
-  getBlobs() { return Promise.resolve([]); },
-  addCommit() { return Promise.resolve(undefined); },
-  addFragment() { return Promise.resolve(undefined); },
-};
-export const repo = new Repo({
-  network: [new MessageChannelNetworkAdapter(channel.port1)],
-  isEphemeral: true,
-  subduction: noopSubduction,
-} as any);
 
 // Initialize keyhive API with worker reference
 initKeyhiveApi(worker);
@@ -84,23 +58,17 @@ setContactNamesDispatch((type, agentId, name) => {
   } catch { /* ignore */ }
 
   // Send the init message to the worker (IDB is now populated)
-  worker.postMessage(
-    {
-      type: 'init',
-      appBaseUrl: window.location.origin + window.location.pathname,
-      port: channel.port2,
-    },
-    [channel.port2],
-  );
+  worker.postMessage({
+    type: 'init',
+    appBaseUrl: window.location.origin + window.location.pathname,
+  });
 })();
 
-// --- Repo network ready promise ---
-// Resolves either when the worker sends 'ready' OR when the MessageChannel peer connects.
+// --- Worker ready promise ---
+// Resolves when the worker sends the 'ready' message after repo initialization.
 
 let resolveRepoReady: () => void;
 export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
-const ns = repo.networkSubsystem;
-ns.on('peer', (p: any) => { console.log('[automerge] workerReady: peer event, peerId=', p?.peerId ?? p); resolveRepoReady(); });
 
 /** Access the underlying worker instance (used by worker-api.ts). */
 export function _worker(): Worker { return worker; }
@@ -114,92 +82,6 @@ export const keyhiveReady = new Promise<void>(r => { resolveKeyhiveReady = r; })
 // Set when the worker sends the 'ready' message.
 let _workerPeerId = '';
 export function getWorkerPeerId(): string { return _workerPeerId; }
-
-// --- Read-only enforcement ---
-// Documents where the current user has read-only access.
-// handle.change() is blocked for these documents.
-const readOnlyDocs = new Set<string>();
-
-export function isDocReadOnly(docId: string): boolean {
-  return readOnlyDocs.has(docId);
-}
-
-/** Mark a document as read-only and guard its handle against changes. */
-export function markDocReadOnly(docId: string) {
-  readOnlyDocs.add(docId);
-  // Guard the existing handle if it's already loaded
-  const handle = (repo as any).handles?.[docId];
-  if (handle && !(handle as any).__readOnlyGuarded) {
-    guardHandle(handle, docId);
-  }
-}
-
-function guardHandle(handle: any, docId: string) {
-  if (handle.__readOnlyGuarded) return;
-  handle.__readOnlyGuarded = true;
-  // Use defineProperty to intercept change() via the prototype chain.
-  // handle.change may not exist yet (set lazily), so we install a getter
-  // that wraps the original method on first access.
-  let wrapped: ((...a: any[]) => any) | null = null;
-  const proto = Object.getPrototypeOf(handle);
-  Object.defineProperty(handle, 'change', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      const orig = proto.change;
-      if (!orig) return orig;
-      if (!wrapped) {
-        wrapped = (...args: any[]) => {
-          if (readOnlyDocs.has(docId)) {
-            console.log('!!!!!! oooh, you are being malicious because you only have read access. let us see what happens with the other peers')
-          }
-          return orig.apply(handle, args);
-        };
-      }
-      return wrapped;
-    },
-    set() {
-      // Ignore attempts to overwrite — keep our guard in place
-    },
-  });
-}
-
-// Wrap repo.find() so every handle gets a dynamic read-only guard
-const origRepoFind = repo.find.bind(repo);
-(repo as any).find = async (docId: any, ...rest: any[]) => {
-  const handle = await origRepoFind(docId, ...rest);
-  guardHandle(handle, String(docId));
-  return handle;
-};
-
-/**
- * Load a document via findWithProgress, calling `onProgress(0-100)` as loading advances.
- * `onProgress` is called with `null` once the document is ready (caller should hide the bar).
- */
-export async function findDocWithProgress<T>(
-  docId: string,
-  onProgress: (pct: number | null) => void,
-): Promise<import('@automerge/automerge-repo').DocHandle<T>> {
-  console.log('[automerge] findDocWithProgress: waiting for workerReady, docId=', docId);
-  await workerReady;
-  console.log('[automerge] findDocWithProgress: workerReady resolved, calling repo.find');
-  const handle = await repo.find<T>(docId as any);
-  console.log('[automerge] findDocWithProgress: repo.find resolved, handle state=', (handle as any).state);
-  onProgress(null);
-
-  // Check access level for keyhive-shared documents
-  const entry = getDocEntry(docId);
-  if (entry?.khDocId) {
-    await keyhiveReady;
-    const access = await getMyAccess(entry.khDocId);
-    if (access && access.toLowerCase() !== 'admin' && access.toLowerCase() !== 'write') {
-      console.log(`[automerge] Document ${docId} is read-only (access: ${access})`);
-      readOnlyDocs.add(docId);
-    }
-  }
-
-  return handle;
-}
 
 // --- Connection status (listens to worker messages) ---
 
@@ -221,8 +103,6 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
   const msg = e.data;
   if (msg.type === 'ready') {
     _workerPeerId = msg.peerId;
-    // Resolve workerReady now — this will also be resolved by the MessageChannel peer event,
-    // but resolving twice is a no-op. Resolving here ensures it works after MessageChannel removal.
     resolveRepoReady();
   } else if (msg.type === 'kh-ready') {
     // Register all known automerge→keyhive doc mappings so the docMap is populated

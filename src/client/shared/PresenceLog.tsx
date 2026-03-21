@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
-import type { Presence } from './automerge';
+import type { Presence } from '@automerge/automerge-repo';
 import './presence-log.css';
 
 export interface PresenceLogEntry {

@@ -5,7 +5,7 @@ import { KeyhiveOps, errMsg } from './keyhive-ops';
 import { populateDocRepoMap, setDocRepo, repoFor as _repoFor } from './repo-routing';
 
 export type MainToWorker =
-  | { type: 'init'; appBaseUrl: string; port?: MessagePort }
+  | { type: 'init'; appBaseUrl: string }
   | { type: 'query'; id: number; docId: string; filter: string }
   // New worker-owned doc API
   | { type: 'create-doc'; id: number; initialJson: any; secure: boolean }
@@ -331,13 +331,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const contactNames = (await idbGet<Record<string, string>>('contact-names')) ?? {};
       (self as any).postMessage({ type: 'contact-names-updated', names: contactNames } satisfies WorkerToMain);
 
-      // --- Attach MessageChannel port to primary repo ---
       const primaryRepo = secureRepo ?? insecureRepo;
-      if (msg.port) {
-        const { MessageChannelNetworkAdapter } = await import('@automerge/automerge-repo-network-messagechannel');
-        primaryRepo.networkSubsystem.addNetworkAdapter(new MessageChannelNetworkAdapter(msg.port));
-      }
-
       console.log('[worker] init complete');
       (self as any).postMessage({ type: 'ready', peerId: primaryRepo.peerId } satisfies WorkerToMain);
     } catch (err: any) {
