@@ -50,6 +50,17 @@ export async function initCaldavKeyhive(
   // Cast to `any` because the `export * from "@keyhive/keyhive/slim"` re-export
   // doesn't resolve under the backend's moduleResolution setting, but the values
   // are present at runtime. The KeyhiveBridge interface provides type safety.
+  // Initialize subduction WASM (required by Repo constructor).
+  // Repo.js (ESM) imports FragmentStateStore from a nested copy of
+  // automerge-subduction. We must initialize that exact copy's WASM.
+  const { createRequire } = await import('module');
+  const repoRequire = createRequire(require.resolve('@automerge/automerge-repo'));
+  const nestedSubductionCjs = repoRequire.resolve('@automerge/automerge-subduction');
+  const nestedSubductionEsm = nestedSubductionCjs.replace('/dist/cjs/node.cjs', '/dist/esm/node.js');
+  const subductionModule = await import(nestedSubductionEsm);
+  const { setSubductionModule } = await import('@automerge/automerge-repo');
+  setSubductionModule(subductionModule);
+
   const khBridge: any = await import('../lib/automerge-repo-keyhive/index');
   khBridge.initKeyhiveWasm();
 
