@@ -70,6 +70,10 @@ export function AddFriendPage({ cardData }: AddFriendPageProps) {
 
       setStatus('Adding contact...');
       const result = await receiveContactCard(cardJson);
+      if (result.isOwnCard) {
+        setError("This is your own contact card. Share this link with a friend \u2014 don't open it yourself.");
+        return;
+      }
       setAgentId(result.agentId);
 
       setStatus('Contact added. Give them a name so you can recognize them later.');

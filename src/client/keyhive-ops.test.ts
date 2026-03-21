@@ -131,6 +131,29 @@ describe('KeyhiveOps', () => {
       }
     });
 
+    it('detects own contact card', async () => {
+      const { ops, fx } = await createOps();
+      const cardJson = await ops.getContactCard();
+      const result = await ops.receiveContactCard(cardJson);
+      expect(result.isOwnCard).toBe(true);
+      expect(result.agentId).toBeDefined();
+      expect(result.agentId).not.toBe('[object Object]');
+      // Should not persist when own card
+      expect(fx.calls.persist.length).toBe(0);
+    });
+
+    it('does not flag other contact cards as own', async () => {
+      const { ops: opsA } = await createOps();
+      const { ops: opsB, fx: fxB } = await createOps();
+      const cardJson = await opsA.getContactCard();
+      const result = await opsB.receiveContactCard(cardJson);
+      expect(result.isOwnCard).toBe(false);
+      expect(result.agentId).toBeDefined();
+      expect(result.agentId).not.toBe('[object Object]');
+      // Should persist when not own card
+      expect(fxB.calls.persist.length).toBe(1);
+    });
+
     it('contact card survives deflate/inflate round-trip (URL encoding path)', async () => {
       // This tests the exact path used by encodeCardForUrl / decodeCardFromUrl
       // in AddFriendPage and LinkDevicePage

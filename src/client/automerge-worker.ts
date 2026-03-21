@@ -691,7 +691,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.receiveContactCard(msg.cardJson);
-      if (msg.isDevice) {
+      if (msg.isDevice && !result.isOwnCard) {
         const { idbGet, idbSet } = await import('./idb-storage');
         const devices = (await idbGet<string[]>('linked-devices')) ?? [];
         if (!devices.includes(result.agentId)) {

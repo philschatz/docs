@@ -68,7 +68,11 @@ export function LinkDevicePage({ cardData }: LinkDevicePageProps) {
       const cardJson = decodeCardFromUrl(cardData);
 
       setStatus('Linking device...');
-      await receiveContactCard(cardJson, { isDevice: true });
+      const result = await receiveContactCard(cardJson, { isDevice: true });
+      if (result.isOwnCard) {
+        setError("This is your own device's link. Open this link on a different device to link it.");
+        return;
+      }
 
       setStatus('Generating your contact card...');
       const myCard = await getContactCard();

@@ -78,7 +78,7 @@ export function getContactCard(): Promise<string> {
 }
 
 /** Receive a contact card from another device/user. Returns the agent ID. */
-export function receiveContactCard(cardJson: string, opts?: { isDevice?: boolean }): Promise<{ agentId: string }> {
+export function receiveContactCard(cardJson: string, opts?: { isDevice?: boolean }): Promise<{ agentId: string; isOwnCard: boolean }> {
   return request('kh-receive-contact-card', { cardJson, isDevice: opts?.isDevice });
 }
 

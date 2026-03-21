@@ -78,11 +78,17 @@ export class KeyhiveOps {
     return typeof json === 'string' ? json : JSON.stringify(json);
   }
 
-  async receiveContactCard(cardJson: string): Promise<{ agentId: string }> {
+  async receiveContactCard(cardJson: string): Promise<{ agentId: string; isOwnCard: boolean }> {
     const card = this.bridge.ContactCard.fromJson(cardJson);
     const individual = await this.kh.receiveContactCard(card);
-    await this.fx.persist();
-    return { agentId: individual.id.toString() };
+    const agentId = bytesToBase64(individual.id.toBytes());
+    const me = await this.kh.individual;
+    const myId = bytesToBase64(me.id.toBytes());
+    const isOwnCard = agentId === myId;
+    if (!isOwnCard) {
+      await this.fx.persist();
+    }
+    return { agentId, isOwnCard };
   }
 
   async getDocMembers(khDocId: string): Promise<MemberInfo[]> {

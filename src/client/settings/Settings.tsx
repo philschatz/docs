@@ -70,7 +70,11 @@ export function Settings({ path }: { path?: string }) {
     if (!linkInput.trim()) return;
     setLoading(true);
     try {
-      await receiveContactCard(linkInput.trim(), { isDevice: true });
+      const result = await receiveContactCard(linkInput.trim(), { isDevice: true });
+      if (result.isOwnCard) {
+        setError("That's your own contact card. Paste the contact card from your other device here.");
+        return;
+      }
       setMessage('Device linked successfully');
       setLinkInput('');
       await refresh();
