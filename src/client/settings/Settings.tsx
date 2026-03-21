@@ -16,11 +16,13 @@ import {
 import { idbGet, idbSet } from '../idb-storage';
 import QRCode from 'qrcode';
 import { buildLinkDeviceUrl } from './LinkDevicePage';
+import { buildAddFriendUrl } from './AddFriendPage';
 export function Settings({ path }: { path?: string }) {
   const [identity, setIdentity] = useState<IdentityInfo | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);
   const [qrSvg, setQrSvg] = useState('');
+  const [friendQrSvg, setFriendQrSvg] = useState('');
   const [linkInput, setLinkInput] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [message, setMessage] = useState('');
@@ -51,6 +53,17 @@ export function Settings({ path }: { path?: string }) {
       const url = buildLinkDeviceUrl(card);
       const svg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 200 });
       setQrSvg(svg);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleShowFriendQr = async () => {
+    try {
+      const card = await getContactCard();
+      const url = buildAddFriendUrl(card);
+      const svg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 200 });
+      setFriendQrSvg(svg);
     } catch (err: any) {
       setError(err.message);
     }
@@ -203,6 +216,20 @@ export function Settings({ path }: { path?: string }) {
               </div>
             ))}
           </div>
+        )}
+      </section>
+
+      {/* Share me with a friend */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold mb-2">Share me with a friend</h2>
+        <p className="text-xs text-muted-foreground mb-2">
+          Show this QR code to a friend so they can add you as a contact and share documents with you.
+        </p>
+        <Button size="sm" variant="outline" onClick={handleShowFriendQr}>
+          Show QR code
+        </Button>
+        {friendQrSvg && (
+          <div className="mt-2 flex justify-center" dangerouslySetInnerHTML={{ __html: friendQrSvg }} />
         )}
       </section>
 

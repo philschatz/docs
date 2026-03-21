@@ -1,0 +1,146 @@
+/**
+ * Add Friend page — handles QR-code-based contact sharing.
+ *
+ * URL format: /#/add-friend/{base64url-encoded-contact-card}
+ *
+ * Flow:
+ * 1. Decode the contact card from the URL
+ * 2. Call receiveContactCard to add them as a known contact
+ * 3. Let the user assign a human-readable name
+ */
+
+import { useState, useCallback } from 'preact/hooks';
+import { Button } from '@/components/ui/button';
+import { receiveContactCard } from '../shared/keyhive-api';
+import { setContactName } from '../contact-names';
+
+interface AddFriendPageProps {
+  cardData?: string;
+  path?: string;
+}
+
+function decodeCardFromUrl(b64url: string): string {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  return decodeURIComponent(atob(b64).split('').map(
+    c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+  ).join(''));
+}
+
+export function encodeCardForUrl(cardJson: string): string {
+  const bytes = new TextEncoder().encode(cardJson);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function buildAddFriendUrl(cardJson: string): string {
+  const base = window.location.origin + window.location.pathname;
+  return `${base}#/add-friend/${encodeCardForUrl(cardJson)}`;
+}
+
+export function AddFriendPage({ cardData }: AddFriendPageProps) {
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [agentId, setAgentId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [processing, setProcessing] = useState(false);
+
+  const doReceive = useCallback(async () => {
+    if (!cardData) {
+      setError('Invalid link — missing contact card data.');
+      return;
+    }
+    setProcessing(true);
+    setError(null);
+
+    try {
+      setStatus('Decoding contact card...');
+      const cardJson = decodeCardFromUrl(cardData);
+
+      setStatus('Adding contact...');
+      const result = await receiveContactCard(cardJson);
+      setAgentId(result.agentId);
+
+      setStatus('Contact added. Give them a name so you can recognize them later.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to add contact');
+    } finally {
+      setProcessing(false);
+    }
+  }, [cardData]);
+
+  const handleSave = () => {
+    if (!agentId) return;
+    if (name.trim()) {
+      setContactName(agentId, name.trim());
+    }
+    setSaved(true);
+  };
+
+  // Auto-start on first render
+  if (!status && !error && !agentId && !processing) {
+    doReceive();
+  }
+
+  return (
+    <div className="max-w-md mx-auto p-8 text-center">
+      <h1 className="text-xl font-bold mb-4">
+        <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 24 }}>person_add</span>
+        Add Friend
+      </h1>
+
+      {error ? (
+        <div className="text-destructive mb-4">
+          <p className="mb-2">{error}</p>
+          <div className="flex gap-2 justify-center">
+            <Button variant="default" onClick={doReceive} disabled={processing}>
+              Retry
+            </Button>
+            <Button variant="outline" onClick={() => { window.location.hash = '/'; }}>
+              Home
+            </Button>
+          </div>
+        </div>
+      ) : saved ? (
+        <div>
+          <p className="text-sm text-green-600 font-medium mb-4">
+            <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 16 }}>check_circle</span>
+            {name.trim() ? `${name.trim()} has been added as a contact.` : 'Contact added.'}
+          </p>
+          <p className="text-xs text-muted-foreground mb-4">
+            You can now share documents with them from any document's sharing panel.
+          </p>
+          <Button variant="outline" onClick={() => { window.location.hash = '/'; }}>
+            Home
+          </Button>
+        </div>
+      ) : agentId ? (
+        <div>
+          <p className="text-sm text-green-600 font-medium mb-4">
+            <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: 16 }}>check_circle</span>
+            Contact received
+          </p>
+          <p className="text-sm text-muted-foreground mb-3">{status}</p>
+          <div className="mb-4">
+            <input
+              className="w-full text-sm p-2 rounded border border-border"
+              value={name}
+              onInput={(e: any) => setName(e.currentTarget.value)}
+              onKeyDown={(e: any) => { if (e.key === 'Enter') handleSave(); }}
+              placeholder="Enter a name for this contact..."
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-2 justify-center">
+            <Button variant="default" onClick={handleSave}>
+              {name.trim() ? 'Save' : 'Skip'}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">{status || 'Processing...'}</p>
+      )}
+    </div>
+  );
+}
