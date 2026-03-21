@@ -255,7 +255,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         const secureWs = new BrowserWebSocketClientAdapter(
           self.location?.protocol === 'https:'
             ? 'wss://auto-relay-436046666a53.herokuapp.com'
-            : `ws://${self.location?.hostname || 'localhost'}:${3000}`
+            : `ws://${self.location?.hostname || 'localhost'}:${self.location?.port || 3000}`
         );
 
         khIntegration = await khBridge.initializeAutomergeRepoKeyhive({
