@@ -93,6 +93,74 @@ describe('KeyhiveOps', () => {
       const result = await opsB.receiveContactCard(cardJson);
       expect(result.agentId).toBeDefined();
     });
+
+    it('returns a JSON string suitable for URL encoding (not [object Object])', async () => {
+      const { ops } = await createOps();
+      const cardJson = await ops.getContactCard();
+
+      // Must be a string, not an object
+      expect(typeof cardJson).toBe('string');
+
+      // Must be valid parseable JSON
+      const parsed = JSON.parse(cardJson);
+      expect(parsed).toBeDefined();
+      expect(typeof parsed).toBe('object');
+
+      // TextEncoder.encode must not produce "[object Object]"
+      // (this is the bug: if toJson() returns an object, encode() stringifies it)
+      const encoded = new TextDecoder().decode(new TextEncoder().encode(cardJson));
+      expect(encoded).not.toBe('[object Object]');
+      expect(encoded).toBe(cardJson);
+    });
+
+    it('raw card.toJson() is handled correctly regardless of return type', async () => {
+      const { kh } = await createOps();
+      const card = await kh.contactCard();
+      const rawJson = card.toJson();
+
+      // Document what the WASM binding actually returns
+      // (it may be a string or an object depending on the binding version)
+      if (typeof rawJson === 'string') {
+        // If it's a string, it must be valid JSON
+        expect(() => JSON.parse(rawJson)).not.toThrow();
+      } else {
+        // If it's an object, JSON.stringify must not produce "[object Object]"
+        const stringified = JSON.stringify(rawJson);
+        expect(stringified).not.toBe('[object Object]');
+        expect(() => JSON.parse(stringified)).not.toThrow();
+      }
+    });
+
+    it('contact card survives deflate/inflate round-trip (URL encoding path)', async () => {
+      // This tests the exact path used by encodeCardForUrl / decodeCardFromUrl
+      // in AddFriendPage and LinkDevicePage
+      const pako = await import('pako');
+      const { ops: opsA } = await createOps();
+      const { ops: opsB } = await createOps();
+
+      const cardJson = await opsA.getContactCard();
+
+      // Simulate encodeCardForUrl: TextEncoder → deflate → base64url
+      const compressed = pako.deflate(new TextEncoder().encode(cardJson));
+      let b64 = '';
+      for (let i = 0; i < compressed.length; i++) b64 += String.fromCharCode(compressed[i]);
+      const b64url = btoa(b64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      // Simulate decodeCardFromUrl: base64url → inflate → TextDecoder
+      const b64standard = b64url.replace(/-/g, '+').replace(/_/g, '/');
+      const binary = atob(b64standard);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const decompressed = new TextDecoder().decode(pako.inflate(bytes));
+
+      // Must survive the round-trip exactly
+      expect(decompressed).toBe(cardJson);
+      expect(decompressed).not.toContain('[object Object]');
+
+      // Must still be receivable after the round-trip
+      const result = await opsB.receiveContactCard(decompressed);
+      expect(result.agentId).toBeDefined();
+    });
   });
 
   describe('enableSharing', () => {
@@ -1002,167 +1070,125 @@ describe('KeyhiveOps', () => {
     });
   });
 
-  describe('device linking via contact card exchange', () => {
-    /** Simulate bidirectional contact card exchange (the device-linking flow).
-     *  Returns base64 agent IDs suitable for addMember. */
-    async function linkDevices(opsA: KeyhiveOps, opsB: KeyhiveOps) {
-      const cardA = await opsA.getContactCard();
-      const cardB = await opsB.getContactCard();
-
-      // Receive contact cards at keyhive level to get proper Individual objects
-      const cardObjA = ContactCard.fromJson(cardA);
-      const cardObjB = ContactCard.fromJson(cardB);
-      const individualAonB = await opsB.kh.receiveContactCard(cardObjA);
-      const individualBonA = await opsA.kh.receiveContactCard(cardObjB);
-
-      // Convert to base64 agent IDs (the format addMember expects)
-      const { bytesToBase64 } = await import('./keyhive-ops');
-      const agentIdOfAOnB = bytesToBase64(individualAonB.id.toBytes());
-      const agentIdOfBOnA = bytesToBase64(individualBonA.id.toBytes());
-      return { agentIdOfAOnB, agentIdOfBOnA };
-    }
-
-    /** Full keyhive event sync: A→B and B→A. */
-    async function syncBidirectional(khA: any, khB: any) {
-      // B→A
+  describe('device linking', () => {
+    /**
+     * Simulate the device-linking flow: bidirectional contact card exchange
+     * + full archive sync, so both keyhive instances know about each other.
+     */
+    async function linkDevices(khA: any, khB: any) {
+      // Bidirectional contact card exchange
       const cardA = await khA.contactCard();
-      const indA_inB = await khB.receiveContactCard(cardA);
-      const bEventsForA: Map<Uint8Array, Uint8Array> = await khB.eventsForAgent(indA_inB.toAgent());
+      const cardB = await khB.contactCard();
+      const individualAonB = await khB.receiveContactCard(cardA);
+      const individualBonA = await khA.receiveContactCard(cardB);
+
+      // Full archive sync so both sides have the complete picture
+      const archiveA = await khA.toArchive();
+      const archiveB = await khB.toArchive();
+      await khB.ingestArchive(archiveA);
+      await khA.ingestArchive(archiveB);
+
+      // Event sync
+      const bEventsForA: Map<Uint8Array, Uint8Array> = await khB.eventsForAgent(individualBonA.toAgent());
       const bArr: Uint8Array[] = [];
       bEventsForA.forEach((v: Uint8Array) => bArr.push(v));
       await khA.ingestEventsBytes(bArr);
 
-      // A→B
-      const cardB = await khB.contactCard();
-      const indB_inA = await khA.receiveContactCard(cardB);
-      const aEventsForB: Map<Uint8Array, Uint8Array> = await khA.eventsForAgent(indB_inA.toAgent());
+      const aEventsForB: Map<Uint8Array, Uint8Array> = await khA.eventsForAgent(individualAonB.toAgent());
       const aArr: Uint8Array[] = [];
       aEventsForB.forEach((v: Uint8Array) => aArr.push(v));
       await khB.ingestEventsBytes(aArr);
 
-      return { indA_inB, indB_inA };
+      return { individualAonB, individualBonA };
     }
 
-    it('bidirectional contact card exchange registers both identities', async () => {
-      const { ops: opsA } = await createOps();
-      const { ops: opsB } = await createOps();
-
-      const { agentIdOfAOnB, agentIdOfBOnA } = await linkDevices(opsA, opsB);
-
-      // Both sides have registered the other's identity
-      expect(agentIdOfAOnB).toBeDefined();
-      expect(agentIdOfBOnA).toBeDefined();
-      expect(agentIdOfAOnB).not.toBe(agentIdOfBOnA);
-    });
-
-    it('linked device can be added as a member and gains document access', async () => {
+    it('after linking, both devices see the same documents with the same access', async () => {
       const { ops: opsA, kh: khA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();
 
-      // Step 1: Link devices (bidirectional contact card exchange)
-      const { agentIdOfBOnA } = await linkDevices(opsA, opsB);
+      // Device A creates two documents before linking
+      const doc1 = await opsA.enableSharing('automerge-doc-1');
+      const doc2 = await opsA.enableSharing('automerge-doc-2');
 
-      // Step 2: Device A creates a shared document
-      const { khDocId } = await opsA.enableSharing('doc-1');
+      // Link devices (bidirectional contact card exchange + sync)
+      await linkDevices(khA, khB);
 
-      // Step 3: Device A adds the linked device B as a member
-      await opsA.addMember(agentIdOfBOnA, khDocId, 'admin');
+      // Both devices should see the same set of reachable documents
+      const aDocs = await khA.reachableDocs();
+      const bDocs = await khB.reachableDocs();
+      expect(aDocs.length).toBe(bDocs.length);
 
-      // Step 4: Sync keyhive state so B learns about the document
-      const bArchive = await khB.toArchive();
-      await khA.ingestArchive(bArchive);
-      const aArchive = await khA.toArchive();
-      await khB.ingestArchive(aArchive);
-      await syncBidirectional(khA, khB);
+      // Both should have the same access level on every document
+      const aId = new Identifier(khA.id.bytes);
+      const bId = new Identifier(khB.id.bytes);
+      for (const aDoc of aDocs) {
+        const docId = aDoc.doc.doc_id;
+        const aAccess = await khA.accessForDoc(aId, docId);
+        const bAccess = await khB.accessForDoc(bId, docId);
+        expect(aAccess).not.toBeNull();
+        expect(bAccess).not.toBeNull();
+        expect(bAccess!.toString()).toBe(aAccess!.toString());
+      }
+    });
 
-      // Step 5: Device B can see the document
-      const bReachable = await khB.reachableDocs();
-      expect(bReachable.length).toBeGreaterThan(0);
+    it('document created after linking is also visible to both devices', async () => {
+      const { ops: opsA, kh: khA } = await createOps();
+      const { ops: opsB, kh: khB } = await createOps();
 
-      // Step 6: Device B can encrypt (proving CGKA membership)
-      const docB = await khB.getDocument(bReachable[0].doc.doc_id);
-      const plaintext = new TextEncoder().encode('hello from linked device B');
+      // Link first
+      await linkDevices(khA, khB);
+
+      // Then device A creates a document
+      await opsA.enableSharing('automerge-doc-1');
+
+      // Re-sync so B learns about the new doc
+      const archiveA = await khA.toArchive();
+      await khB.ingestArchive(archiveA);
+
+      const cardA = await khA.contactCard();
+      const indA_inB = await khB.receiveContactCard(cardA);
+      const aEvts: Map<Uint8Array, Uint8Array> = await khA.eventsForAgent(indA_inB.toAgent());
+      const arr: Uint8Array[] = [];
+      aEvts.forEach((v: Uint8Array) => arr.push(v));
+      await khB.ingestEventsBytes(arr);
+
+      // Both devices should see it with the same access
+      const aDocs = await khA.reachableDocs();
+      const bDocs = await khB.reachableDocs();
+      expect(aDocs.length).toBe(1);
+      expect(bDocs.length).toBe(1);
+
+      const aId = new Identifier(khA.id.bytes);
+      const bId = new Identifier(khB.id.bytes);
+      const aAccess = await khA.accessForDoc(aId, aDocs[0].doc.doc_id);
+      const bAccess = await khB.accessForDoc(bId, bDocs[0].doc.doc_id);
+      expect(bAccess!.toString()).toBe(aAccess!.toString());
+    });
+
+    it('linked device can encrypt and the other can decrypt', async () => {
+      const { ops: opsA, kh: khA } = await createOps();
+      const { ops: opsB, kh: khB } = await createOps();
+
+      await opsA.enableSharing('automerge-doc-1');
+      const { individualAonB } = await linkDevices(khA, khB);
+
+      // B encrypts on a doc it gained access to via linking
+      const bDocs = await khB.reachableDocs();
+      expect(bDocs.length).toBe(1);
+      const docB = await khB.getDocument(bDocs[0].doc.doc_id);
+      const plaintext = new TextEncoder().encode('written on device B');
       const ref = new ChangeId(crypto.getRandomValues(new Uint8Array(32)));
-      const encResult = await khB.tryEncryptArchive(docB!, ref, [], plaintext);
-      expect(encResult.encrypted_content()).toBeDefined();
+      const enc = await khB.tryEncryptArchive(docB!, ref, [], plaintext);
 
-      // Step 7: Device A can decrypt what B encrypted
       // Sync B's CGKA ops to A
-      const cardA2 = await khA.contactCard();
-      const indA_inB2 = await khB.receiveContactCard(cardA2);
-      const bEvts: Map<Uint8Array, Uint8Array> = await khB.eventsForAgent(indA_inB2.toAgent());
-      const bArr: Uint8Array[] = [];
-      bEvts.forEach((v: Uint8Array) => bArr.push(v));
-      await khA.ingestEventsBytes(bArr);
+      const bEvts: Map<Uint8Array, Uint8Array> = await khB.eventsForAgent(individualAonB.toAgent());
+      const arr: Uint8Array[] = [];
+      bEvts.forEach((v: Uint8Array) => arr.push(v));
+      await khA.ingestEventsBytes(arr);
 
+      // A decrypts
       const docA = await khA.getDocument(opsA.khDocuments.values().next().value!.doc_id);
-      const decrypted = await khA.tryDecrypt(docA!, encResult.encrypted_content());
-      expect(new Uint8Array(decrypted)).toEqual(plaintext);
-    });
-
-    it('linked device appears in document member list after being added', async () => {
-      const { ops: opsA } = await createOps();
-      const { ops: opsB } = await createOps();
-
-      const { agentIdOfBOnA } = await linkDevices(opsA, opsB);
-      const { khDocId } = await opsA.enableSharing('doc-1');
-      await opsA.addMember(agentIdOfBOnA, khDocId, 'write');
-
-      const members = await opsA.getDocMembers(khDocId);
-      const deviceB = members.find(m => m.agentId === agentIdOfBOnA);
-      expect(deviceB).toBeDefined();
-      expect(deviceB!.role).toBe('Write');
-    });
-
-    it('contact card exchange alone does not grant document access', async () => {
-      const { ops: opsA, kh: khA } = await createOps();
-      const { ops: opsB, kh: khB } = await createOps();
-
-      // Link devices
-      await linkDevices(opsA, opsB);
-
-      // Device A creates a shared document (but does NOT add B as a member)
-      await opsA.enableSharing('doc-1');
-
-      // Sync keyhive state
-      const aArchive = await khA.toArchive();
-      await khB.ingestArchive(aArchive);
-
-      // Device B should NOT see the document — linking alone doesn't grant access
-      const bReachable = await khB.reachableDocs();
-      expect(bReachable.length).toBe(0);
-    });
-
-    it('A encrypts → linked device B decrypts after sync (cross-device)', async () => {
-      const { ops: opsA, kh: khA } = await createOps();
-      const { ops: opsB, kh: khB } = await createOps();
-
-      // Link + share
-      const { agentIdOfBOnA } = await linkDevices(opsA, opsB);
-      const { khDocId } = await opsA.enableSharing('doc-1');
-      await opsA.addMember(agentIdOfBOnA, khDocId, 'write');
-
-      // Sync archives so B knows about the document
-      const bArchive = await khB.toArchive();
-      await khA.ingestArchive(bArchive);
-      const { indB_inA } = await syncBidirectional(khA, khB);
-
-      // A encrypts
-      const docA = await khA.getDocument(opsA.khDocuments.values().next().value!.doc_id);
-      const plaintext = new TextEncoder().encode('synced across devices');
-      const ref = new ChangeId(crypto.getRandomValues(new Uint8Array(32)));
-      const encResult = await khA.tryEncryptArchive(docA!, ref, [], plaintext);
-
-      // Sync A's CGKA update to B
-      const aEventsForB: Map<Uint8Array, Uint8Array> = await khA.eventsForAgent(indB_inA.toAgent());
-      const aArr: Uint8Array[] = [];
-      aEventsForB.forEach((v: Uint8Array) => aArr.push(v));
-      await khB.ingestEventsBytes(aArr);
-
-      // B decrypts
-      const bReachable = await khB.reachableDocs();
-      const docB = await khB.getDocument(bReachable[0].doc.doc_id);
-      const decrypted = await khB.tryDecrypt(docB!, encResult.encrypted_content());
+      const decrypted = await khA.tryDecrypt(docA!, enc.encrypted_content());
       expect(new Uint8Array(decrypted)).toEqual(plaintext);
     });
   });

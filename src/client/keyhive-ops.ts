@@ -72,7 +72,10 @@ export class KeyhiveOps {
 
   async getContactCard(): Promise<string> {
     const card = await this.kh.contactCard();
-    return card.toJson();
+    const json = card.toJson();
+    // toJson() may return a parsed object depending on the WASM binding version;
+    // ensure we always return a JSON string for URL encoding / postMessage.
+    return typeof json === 'string' ? json : JSON.stringify(json);
   }
 
   async receiveContactCard(cardJson: string): Promise<{ agentId: string }> {
