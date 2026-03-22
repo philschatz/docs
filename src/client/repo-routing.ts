@@ -46,3 +46,47 @@ export function repoFor<T>(
   if (secureRepo) return secureRepo;
   throw new Error('No repo available');
 }
+
+interface RepoLike {
+  find(docId: any): Promise<{ whenReady(): Promise<void> }> | { whenReady(): Promise<void> };
+}
+
+/**
+ * When the repo for a docId is unknown, try both repos and return the handle
+ * from whichever becomes ready first. Records the winning repo in docRepoMap.
+ *
+ * This handles the case where a user opens a shared secure document URL
+ * before keyhive has synced — the doc isn't in the local doc list yet, and
+ * keyhive detection returns null. Without this, repoFor() defaults to
+ * insecure, the handle never becomes ready, and the user gets stuck.
+ */
+export async function findInRepos(
+  docId: string,
+  secureRepo: RepoLike | null,
+  insecureRepo: RepoLike | null,
+): Promise<{ handle: any; mode: RepoMode }> {
+  const candidates: Array<{ repo: RepoLike; mode: RepoMode }> = [];
+  if (secureRepo) candidates.push({ repo: secureRepo, mode: 'secure' });
+  if (insecureRepo) candidates.push({ repo: insecureRepo, mode: 'insecure' });
+  if (candidates.length === 0) throw new Error('No repo available');
+  if (candidates.length === 1) {
+    const { repo, mode } = candidates[0];
+    const handle = await repo.find(docId as any);
+    setDocRepo(docId, mode);
+    return { handle, mode };
+  }
+  // Race both repos — first to become ready wins
+  const entries = await Promise.all(
+    candidates.map(async ({ repo, mode }) => ({
+      handle: await repo.find(docId as any),
+      mode,
+    })),
+  );
+  const winner = await Promise.race(
+    entries.map(({ handle, mode }) =>
+      handle.whenReady().then(() => ({ handle, mode })),
+    ),
+  );
+  setDocRepo(docId, winner.mode);
+  return winner;
+}

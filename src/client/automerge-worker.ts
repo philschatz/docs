@@ -2,7 +2,7 @@ import { deepAssign } from '../shared/deep-assign';
 import { syncToTarget } from '../shared/sync-to-target';
 import { validateDocument } from '../shared/schemas';
 import { KeyhiveOps, bytesToBase64, errMsg } from './keyhive-ops';
-import { populateDocRepoMap, setDocRepo, getDocRepo, repoFor as _repoFor } from './repo-routing';
+import { populateDocRepoMap, setDocRepo, getDocRepo, repoFor as _repoFor, findInRepos } from './repo-routing';
 
 export type MainToWorker =
   | { type: 'init'; appBaseUrl: string; enableInsecureRepo: boolean }
@@ -198,6 +198,76 @@ function pushValidation(docId: string, doc: any) {
   (self as any).postMessage({ type: 'validation-result', docId, errors } satisfies WorkerToMain);
 }
 
+/**
+ * After keyhive ingests remote ops, check if any new documents became reachable
+ * (e.g. Bob was added as a member by Alice). If so, add them to the doc list
+ * and register the doc mapping so the secure repo can find them.
+ *
+ * Two discovery methods:
+ * 1. reachableDocs() — finds docs the keyhive access graph says we can reach
+ * 2. pendingDecrypt scan — for encrypted messages we've received but can't yet
+ *    decrypt, try getDocument() to see if keyhive now knows about them
+ */
+async function checkForNewKeyhiveDocs() {
+  if (!khOps || !khBridge || !khIntegration) return;
+  try {
+    const { idbGet, idbSet } = await import('./idb-storage');
+    type StoredDocEntry = { id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string };
+    const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
+    const dismissed = new Set((await idbGet<string[]>('dismissed-doc-ids')) ?? []);
+    const knownIds = new Set(list.map(e => e.id));
+    let changed = false;
+
+    const addDoc = (amDocId: string, khDocIdObj: any) => {
+      if (knownIds.has(amDocId) || dismissed.has(amDocId)) return;
+      const khDocIdB64 = bytesToBase64(khDocIdObj.toBytes());
+      console.log(`[worker] checkForNewKeyhiveDocs: discovered new doc ${amDocId} (kh=${khDocIdB64})`);
+      khIntegration!.networkAdapter.registerDoc(amDocId, khDocIdObj);
+      setDocRepo(amDocId, 'secure');
+      list.unshift({ id: amDocId, encrypted: true, khDocId: khDocIdB64 });
+      knownIds.add(amDocId);
+      changed = true;
+    };
+
+    // Method 1: reachableDocs
+    const reachable = await khOps.kh.reachableDocs();
+    console.log(`[worker] checkForNewKeyhiveDocs: ${reachable.length} reachable doc(s)`);
+    for (const entry of reachable) {
+      addDoc(toDocumentId(entry.doc.doc_id), entry.doc.doc_id);
+    }
+
+    // Method 2: check pending encrypted messages for docs not yet in docMap.
+    // After ingestion, keyhive may now know about these docs even if
+    // reachableDocs() doesn't list them yet.
+    const na = khIntegration.networkAdapter as any;
+    const pending: Array<{ automergeDocId: string }> = na.pendingDecrypt ?? [];
+    const checkedIds = new Set<string>();
+    for (const entry of pending) {
+      const amDocId = entry.automergeDocId;
+      if (knownIds.has(amDocId) || checkedIds.has(amDocId)) continue;
+      checkedIds.add(amDocId);
+      try {
+        const automergeUrl = `automerge:${amDocId}`;
+        const khDocId = khBridge!.docIdFromAutomergeUrl(automergeUrl as any);
+        const doc = await khOps.kh.getDocument(khDocId);
+        if (doc) {
+          console.log(`[worker] checkForNewKeyhiveDocs: found pending doc ${amDocId} via getDocument`);
+          addDoc(amDocId, khDocId);
+        }
+      } catch {
+        // Not a keyhive-formatted docId — skip
+      }
+    }
+
+    if (changed) {
+      await idbSet('automerge-doc-ids', list);
+      (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
+    }
+  } catch (err) {
+    console.warn('[worker] checkForNewKeyhiveDocs failed:', errMsg(err));
+  }
+}
+
 function postStatus() {
   const securePeers = secureRepo ? secureRepo.peers : [];
   const insecurePeers = insecureRepo ? insecureRepo.peers : [];
@@ -313,7 +383,13 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           },
         } as any);
 
-        khIntegration.linkRepo(secureRepo);
+        khIntegration.linkRepo(secureRepo, {
+          onBeforeShareConfigChanged: () => {
+            // After keyhive ingests remote ops, check for newly discovered documents
+            // (e.g. Bob was added as a member by Alice — the doc should appear in Bob's list)
+            void checkForNewKeyhiveDocs();
+          },
+        });
 
         khOps = new KeyhiveOps(khIntegration.keyhive, khBridge as any, {
           persist: () => khIntegration!.keyhiveStorage.saveKeyhiveWithHash(khIntegration!.keyhive),
@@ -421,7 +497,15 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         }
       }
       progress(10, 'Finding document\u2026');
-      const handle = await getOrLoadHandle(msg.docId);
+      let handle: any;
+      if (getDocRepo(msg.docId) === undefined) {
+        // Unknown repo — try both and use whichever becomes ready first.
+        // This handles shared secure docs where keyhive hasn't synced yet.
+        const result = await findInRepos(msg.docId, secureRepo, insecureRepo);
+        handle = result.handle;
+      } else {
+        handle = await getOrLoadHandle(msg.docId);
+      }
       getOrCreateEntry(msg.docId, handle);
       progress(50, 'Loading document data\u2026');
       const isReady = handle.isReady ? handle.isReady() : false;
@@ -670,6 +754,12 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (removedEntry?.khDocId) {
         const { removeInviteRecordsForDoc } = await import('./invite-storage');
         await removeInviteRecordsForDoc(removedEntry.khDocId);
+      }
+      // Remember this doc was explicitly removed so auto-discovery doesn't re-add it
+      const dismissed = (await idbGet<string[]>('dismissed-doc-ids')) ?? [];
+      if (!dismissed.includes(msg.docId)) {
+        dismissed.push(msg.docId);
+        await idbSet('dismissed-doc-ids', dismissed);
       }
       (self as any).postMessage({ type: 'doc-list-updated', list: filtered } satisfies WorkerToMain);
     } catch (err: any) {
