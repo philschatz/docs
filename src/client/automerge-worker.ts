@@ -199,14 +199,14 @@ function pushValidation(docId: string, doc: any) {
 }
 
 /**
- * After keyhive ingests remote ops, check if any new documents became reachable
- * (e.g. Bob was added as a member by Alice). If so, add them to the doc list
- * and register the doc mapping so the secure repo can find them.
+ * After keyhive ingests remote ops, check if any new documents were shared
+ * with us. We detect this by scanning pendingDecrypt — encrypted messages
+ * we've received but couldn't decrypt because the doc wasn't registered yet.
+ * After keyhive ingestion, getDocument() may now succeed for these docs.
  *
- * Two discovery methods:
- * 1. reachableDocs() — finds docs the keyhive access graph says we can reach
- * 2. pendingDecrypt scan — for encrypted messages we've received but can't yet
- *    decrypt, try getDocument() to see if keyhive now knows about them
+ * We intentionally don't use reachableDocs() because it returns ALL docs
+ * visible in the keyhive graph (including docs on the same relay that
+ * haven't been explicitly shared with this user).
  */
 async function checkForNewKeyhiveDocs() {
   if (!khOps || !khBridge || !khIntegration) return;
@@ -218,8 +218,8 @@ async function checkForNewKeyhiveDocs() {
     const knownIds = new Set(list.map(e => e.id));
     let changed = false;
 
-    const addDoc = (amDocId: string, khDocIdObj: any) => {
-      if (knownIds.has(amDocId) || dismissed.has(amDocId)) return;
+    const addDoc = (amDocId: string, khDocIdObj: any): boolean => {
+      if (knownIds.has(amDocId) || dismissed.has(amDocId)) return false;
       const khDocIdB64 = bytesToBase64(khDocIdObj.toBytes());
       console.log(`[worker] checkForNewKeyhiveDocs: discovered new doc ${amDocId} (kh=${khDocIdB64})`);
       khIntegration!.networkAdapter.registerDoc(amDocId, khDocIdObj);
@@ -227,16 +227,12 @@ async function checkForNewKeyhiveDocs() {
       list.unshift({ id: amDocId, encrypted: true, khDocId: khDocIdB64 });
       knownIds.add(amDocId);
       changed = true;
+      return true;
     };
 
-    // Method 1: reachableDocs
-    const reachable = await khOps.kh.reachableDocs();
-    console.log(`[worker] checkForNewKeyhiveDocs: ${reachable.length} reachable doc(s)`);
-    for (const entry of reachable) {
-      addDoc(toDocumentId(entry.doc.doc_id), entry.doc.doc_id);
-    }
+    const newDocHandles: string[] = [];
 
-    // Method 2: check pending encrypted messages for docs not yet in docMap.
+    // Check pending encrypted messages for docs not yet in docMap.
     // After ingestion, keyhive may now know about these docs even if
     // reachableDocs() doesn't list them yet.
     const na = khIntegration.networkAdapter as any;
@@ -252,7 +248,7 @@ async function checkForNewKeyhiveDocs() {
         const doc = await khOps.kh.getDocument(khDocId);
         if (doc) {
           console.log(`[worker] checkForNewKeyhiveDocs: found pending doc ${amDocId} via getDocument`);
-          addDoc(amDocId, khDocId);
+          if (addDoc(amDocId, khDocId)) newDocHandles.push(amDocId);
         }
       } catch {
         // Not a keyhive-formatted docId — skip
@@ -262,6 +258,16 @@ async function checkForNewKeyhiveDocs() {
     if (changed) {
       await idbSet('automerge-doc-ids', list);
       (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
+      // Pre-load newly discovered docs so they show type/name on the homepage
+      // instead of appearing as "?" until manually opened.
+      for (const docId of newDocHandles) {
+        try {
+          const handle = await getOrLoadHandle(docId);
+          getOrCreateEntry(docId, handle);
+        } catch (err) {
+          console.warn(`[worker] checkForNewKeyhiveDocs: failed to pre-load ${docId}:`, errMsg(err));
+        }
+      }
     }
   } catch (err) {
     console.warn('[worker] checkForNewKeyhiveDocs failed:', errMsg(err));
@@ -518,6 +524,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         handle.whenReady().then(() => {
           progress(100, 'Ready');
           post.postMessage({ type: 'result', id: msg.id, result: { docId: msg.docId, secure } } satisfies WorkerToMain);
+        }).catch((err: any) => {
+          post.postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
         });
       }
     } catch (err: any) {
@@ -544,7 +552,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (isReady) {
         await pushToSubscriptions(msg.docId);
       } else {
-        handle.whenReady().then(() => pushToSubscriptions(msg.docId));
+        handle.whenReady().then(() => pushToSubscriptions(msg.docId)).catch((err: any) => {
+          (self as any).postMessage({ type: 'sub-result', subId: msg.subId, result: null, heads: [], error: errMsg(err) } satisfies WorkerToMain);
+        });
       }
     } catch (err: any) {
       (self as any).postMessage({ type: 'sub-result', subId: msg.subId, result: null, heads: [], error: errMsg(err) } satisfies WorkerToMain);
@@ -583,10 +593,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
   }
 
   if (msg.type === 'set-doc-version') {
-    const entry = docRegistry.get(msg.docId);
-    if (!entry) return;
-    entry.pinnedVersion = msg.version;
-    await pushToSubscriptions(msg.docId);
+    try {
+      const entry = docRegistry.get(msg.docId);
+      if (!entry) return;
+      entry.pinnedVersion = msg.version;
+      await pushToSubscriptions(msg.docId);
+    } catch (err: any) {
+      console.warn('[worker] set-doc-version failed:', errMsg(err));
+    }
   }
 
   if (msg.type === 'update-doc') {

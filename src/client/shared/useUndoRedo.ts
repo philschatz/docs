@@ -23,6 +23,7 @@ export function useUndoRedo(docId: string) {
 
   // Load history on mount to set initial cursor
   useEffect(() => {
+    seenFirstHeadsRef.current = false;
     let cancelled = false;
     getDocHistory(docId).then(h => {
       if (cancelled) return;

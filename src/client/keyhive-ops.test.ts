@@ -1291,6 +1291,22 @@ describe('KeyhiveOps', () => {
       return { khDocId, bobAgentId };
     }
 
+    it('addMember calls forceResyncAllPeers so the doc is pushed to the new member', async () => {
+      const { ops: opsA, kh: khA, fx: fxA } = await createOps();
+      const { ops: opsB, kh: khB } = await createOps();
+
+      const { automergeDocIdBytes } = await createDocForSharing(opsA);
+      const resyncCountBefore = fxA.calls.forceResyncAllPeers.length;
+
+      await addFriendAndMember({
+        opsA, khA, opsB, khB,
+        automergeDocId: 'am-doc-1',
+        automergeDocIdBytes,
+      });
+
+      expect(fxA.calls.forceResyncAllPeers.length).toBe(resyncCountBefore + 1);
+    });
+
     it('after sync, Bob can discover the document via reachableDocs', async () => {
       const { ops: opsA, kh: khA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();

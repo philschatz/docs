@@ -31,8 +31,7 @@ export function deepAssign<T extends Record<string, any>>(target: T, source: Par
     } else if (
       Array.isArray(target[key]) &&
       Array.isArray(sourceValue) &&
-      target[key].length === 1 &&
-      (sourceValue as Array<any>).length === 1
+      target[key].length === (sourceValue as Array<any>).length
     ) {
       deepAssign(target[key], sourceValue);
     } else if (target[key] !== sourceValue) {

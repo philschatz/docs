@@ -133,6 +133,7 @@ export class KeyhiveOps {
     await this.kh.addMember(agent, doc.toMembered(), access, []);
     await this.fx.persist();
     this.fx.syncKeyhive();
+    this.fx.forceResyncAllPeers();
     return true;
   }
 
