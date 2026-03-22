@@ -1238,15 +1238,13 @@ describe('KeyhiveOps', () => {
 
   describe('direct add member (no invite link)', () => {
     /**
-     * Simulate the idFactory: generate a keyhive document and use its doc_id
-     * bytes as the "automerge document ID". This mirrors what keyhiveIdFactory
-     * does when the secure repo creates a document.
+     * Simulate createKeyhiveDoc: generate a keyhive document (no co-parents)
+     * and use its doc_id bytes as the "automerge document ID". This mirrors
+     * what the worker does: createKeyhiveDoc() → setNextDocId → create2().
      */
-    async function createDocWithIdFactory(kh: any): Promise<{ automergeDocIdBytes: Uint8Array }> {
-      const ref = new ChangeId(crypto.getRandomValues(new Uint8Array(32)));
-      const g = await kh.generateGroup([]);
-      const doc = await kh.generateDocument([g.toPeer()], ref, []);
-      return { automergeDocIdBytes: doc.doc_id.toBytes() };
+    async function createDocForSharing(ops: KeyhiveOps): Promise<{ automergeDocIdBytes: Uint8Array; khDocId: string }> {
+      const { docIdBytes, khDocId } = await ops.createKeyhiveDoc();
+      return { automergeDocIdBytes: docIdBytes, khDocId };
     }
 
     /**
@@ -1297,7 +1295,7 @@ describe('KeyhiveOps', () => {
       const { ops: opsA, kh: khA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();
 
-      const { automergeDocIdBytes } = await createDocWithIdFactory(khA);
+      const { automergeDocIdBytes } = await createDocForSharing(opsA);
       await addFriendAndMember({
         opsA, khA, opsB, khB,
         automergeDocId: 'am-doc-1',
@@ -1308,11 +1306,11 @@ describe('KeyhiveOps', () => {
       expect(bDocs.length).toBeGreaterThan(0);
     });
 
-    it('enableSharing reuses existing keyhive doc from idFactory', async () => {
+    it('enableSharing reuses existing keyhive doc from createKeyhiveDoc', async () => {
       const { ops, kh } = await createOps();
 
-      // Simulate idFactory creating a keyhive doc
-      const { automergeDocIdBytes } = await createDocWithIdFactory(kh);
+      // createKeyhiveDoc creates the keyhive doc
+      const { automergeDocIdBytes } = await createDocForSharing(ops);
 
       // enableSharing should find the existing doc, not create a new one
       const docsBefore = await kh.reachableDocs();
@@ -1358,7 +1356,7 @@ describe('KeyhiveOps', () => {
       const { ops: opsA, kh: khA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();
 
-      const { automergeDocIdBytes } = await createDocWithIdFactory(khA);
+      const { automergeDocIdBytes } = await createDocForSharing(opsA);
       await addFriendAndMember({
         opsA, khA, opsB, khB,
         automergeDocId: 'am-doc-1',

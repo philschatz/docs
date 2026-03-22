@@ -106,6 +106,7 @@ let secureRepo: InstanceType<typeof Repo> | null = null;
 let insecureRepo: InstanceType<typeof Repo> | null = null;
 let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = null;
 let khOps: KeyhiveOps | null = null;
+let setNextDocId: ((bytes: Uint8Array) => void) | null = null;
 let appBaseUrl = '';
 
 /** Pick the correct repo for a given docId based on the docRepoMap. */
@@ -290,12 +291,22 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           addCommit() { return Promise.resolve(undefined); },
           addFragment() { return Promise.resolve(undefined); },
         };
+        // Slot for pre-generated keyhive doc IDs. enableSharing creates the
+        // keyhive doc first, sets nextDocIdBytes, then create2() consumes it
+        // so the automerge doc ID = keyhive doc ID.
+        let nextDocIdBytes: Uint8Array | null = null;
+        setNextDocId = (bytes: Uint8Array) => { nextDocIdBytes = bytes; };
         secureRepo = new Repo({
           network: [khIntegration.networkAdapter],
           storage: secureStorage,
           subduction: noopSubduction,
           peerId: khIntegration.peerId,
-          idFactory: khIntegration.idFactory,
+          idFactory: async () => {
+            if (!nextDocIdBytes) throw new Error('nextDocIdBytes not set before create2');
+            const bytes = nextDocIdBytes;
+            nextDocIdBytes = null;
+            return bytes;
+          },
         } as any);
 
         khIntegration.linkRepo(secureRepo);
@@ -359,14 +370,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       let handle: any;
       let khDocId: string | undefined;
       if (msg.secure) {
-        if (!secureRepo || !khOps || !khBridge) throw new Error('Secure repo not available');
-        // create2 uses the async idFactory (keyhiveIdFactory) so that
-        // the automerge doc ID = keyhive doc ID.
+        if (!secureRepo || !khOps || !setNextDocId) throw new Error('Secure repo not available');
+        // Create the keyhive document first (no co-parents, correct access model).
+        // Then create the automerge document using the keyhive doc_id as its ID
+        // so that recipients can look up the keyhive doc from the automerge URL.
+        const { docIdBytes } = await khOps.createKeyhiveDoc();
+        setNextDocId(docIdBytes);
         handle = await secureRepo.create2(msg.initialJson);
-        // The idFactory already created a keyhive doc — pass its ID bytes
-        // so enableSharing reuses it instead of creating a duplicate.
-        const khDocIdObj = khBridge.docIdFromAutomergeUrl(`automerge:${handle.documentId}` as any);
-        const sharing = await khOps.enableSharing(handle.documentId, khDocIdObj.toBytes());
+        const sharing = await khOps.enableSharing(handle.documentId, docIdBytes);
         khDocId = sharing.khDocId;
       } else {
         if (!insecureRepo) throw new Error('Insecure repo not available');
