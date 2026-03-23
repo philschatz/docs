@@ -438,6 +438,12 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         secureWs.onClose = () => { origSecureClose(); (self as any).postMessage({ type: 'ws-status', repo: 'secure', connected: false } satisfies WorkerToMain); };
 
         console.log('[worker] secure repo created, peerId:', khIntegration.peerId);
+        // Push contact names BEFORE kh-ready so code awaiting keyhiveReady sees them
+        {
+          const { idbGet: idbGetNames } = await import('./idb-storage');
+          const earlyNames = (await idbGetNames<Record<string, string>>('contact-names')) ?? {};
+          (self as any).postMessage({ type: 'contact-names-updated', names: earlyNames } satisfies WorkerToMain);
+        }
         (self as any).postMessage({ type: 'kh-ready' } satisfies WorkerToMain);
       } catch (khErr: any) {
         console.error('[worker] keyhive init failed (continuing without encryption):', khErr);
@@ -474,9 +480,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const knownKhDocIds = new Set(docList.map(d => d.khDocId).filter(Boolean) as string[]);
       await pruneInvitesNotIn(knownKhDocIds);
 
-      // --- Load and push contact names from IDB ---
-      const contactNames = (await idbGet<Record<string, string>>('contact-names')) ?? {};
-      (self as any).postMessage({ type: 'contact-names-updated', names: contactNames } satisfies WorkerToMain);
+      // Contact names already pushed before kh-ready above
 
       const primaryRepo = secureRepo ?? insecureRepo;
       console.log('[worker] init complete');

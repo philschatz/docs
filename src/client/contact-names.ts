@@ -32,7 +32,6 @@ export function setContactName(agentId: string, name: string): void {
     return;
   }
   cache[agentId] = trimmed;
-  if (!dispatch) console.warn('[contact-names] dispatch not set — name will not persist');
   dispatch?.('set-contact-name', agentId, trimmed);
 }
 

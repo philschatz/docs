@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { EditableName } from '@/components/EditableName';
 import { getDocMembers, type MemberInfo } from '../shared/keyhive-api';
+import { keyhiveReady } from '../shared/automerge';
 import { getContactName, getAllContactNames } from '../contact-names';
 import { getDocList } from '../doc-storage';
 import { type DocType, viewPathForType, iconForType } from '../shared/doc-type-helpers';
@@ -39,6 +40,8 @@ export function Contacts({ path }: { path?: string }) {
     setLoading(true);
     setError('');
     try {
+      // Ensure worker has pushed contact names before we read the cache
+      await keyhiveReady;
       const docs = getDocList().filter(d => d.encrypted && d.khDocId);
       const results = await Promise.allSettled(
         docs.map(d => getDocMembers(d.khDocId!))
