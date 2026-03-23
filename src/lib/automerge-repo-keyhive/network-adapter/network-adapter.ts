@@ -1461,6 +1461,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               };
               if (!peer.keyhiveSynced) {
                 peer.keyhiveSynced = true;
+                // Doc messages were dropped while keyhiveSynced was false.
+                // Re-emit peer events so automerge-repo re-syncs — this time
+                // messages will be encrypted and sent.
+                this.emit("peer-disconnected", { peerId: message.senderId });
+                this.emit("peer-candidate", { peerId: message.senderId, peerMetadata: {} });
               }
             }
             const confirmData = encode({
@@ -1575,6 +1580,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       };
       if (!peer.keyhiveSynced) {
         peer.keyhiveSynced = true;
+        // Doc messages were dropped while keyhiveSynced was false.
+        // Re-emit peer events so automerge-repo re-syncs — this time
+        // messages will be encrypted and sent.
+        this.emit("peer-disconnected", { peerId: message.senderId });
+        this.emit("peer-candidate", { peerId: message.senderId, peerMetadata: {} });
       }
     }
 

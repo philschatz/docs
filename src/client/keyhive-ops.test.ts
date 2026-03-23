@@ -1291,7 +1291,7 @@ describe('KeyhiveOps', () => {
       return { khDocId, bobAgentId };
     }
 
-    it('addMember does NOT call forceResyncAllPeers (avoids unencrypted resync window)', async () => {
+    it('addMember calls forceResyncAllPeers to trigger doc sync to the new member', async () => {
       const { ops: opsA, kh: khA, fx: fxA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();
 
@@ -1304,10 +1304,43 @@ describe('KeyhiveOps', () => {
         automergeDocIdBytes,
       });
 
-      // forceResyncAllPeers resets keyhiveSynced=false for all peers, causing
-      // ALL docs to be sent unencrypted during the re-sync. addMember only
-      // calls syncKeyhive() to deliver membership ops via the keyhive channel.
-      expect(fxA.calls.forceResyncAllPeers.length).toBe(resyncCountBefore);
+      // forceResyncAllPeers triggers automerge-repo to re-sync with all peers.
+      // This is safe because the network adapter drops doc messages while
+      // keyhiveSynced=false — keyhive handshake completes first, then
+      // encrypted doc data flows. Without this call, Bob wouldn't receive
+      // the doc until Alice makes an edit.
+      expect(fxA.calls.forceResyncAllPeers.length).toBe(resyncCountBefore + 1);
+    });
+
+    it('addMember calls syncKeyhive before forceResyncAllPeers (keyhive handshake first)', async () => {
+      // The order matters: syncKeyhive delivers membership ops so the peer's
+      // keyhive can process them. forceResyncAllPeers then triggers automerge-repo
+      // to re-sync, which starts with a keyhive handshake (non-doc messages).
+      // Once the handshake confirms (keyhiveSynced=true), encrypted doc data flows.
+      // If forceResyncAllPeers ran first, the re-sync would try to send doc data
+      // before the peer has CGKA keys — but the network adapter drops those messages.
+      const { ops: opsA, kh: khA, fx: fxA } = await createOps();
+      const { ops: opsB, kh: khB } = await createOps();
+
+      const { automergeDocIdBytes } = await createDocForSharing(opsA);
+
+      // Track call order
+      const callOrder: string[] = [];
+      const origSync = fxA.syncKeyhive;
+      const origResync = fxA.forceResyncAllPeers;
+      fxA.syncKeyhive = () => { callOrder.push('syncKeyhive'); origSync(); };
+      fxA.forceResyncAllPeers = () => { callOrder.push('forceResyncAllPeers'); origResync(); };
+
+      await addFriendAndMember({
+        opsA, khA, opsB, khB,
+        automergeDocId: 'am-doc-order',
+        automergeDocIdBytes,
+      });
+
+      const syncIdx = callOrder.indexOf('syncKeyhive');
+      const resyncIdx = callOrder.indexOf('forceResyncAllPeers');
+      expect(syncIdx).toBeGreaterThanOrEqual(0);
+      expect(resyncIdx).toBeGreaterThan(syncIdx);
     });
 
     it('after sync, Bob can discover the document via reachableDocs', async () => {

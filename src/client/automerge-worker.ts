@@ -371,9 +371,26 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           disconnectFromPeer() {},
           syncAll() { return Promise.resolve({ entries() { return []; } }); },
           syncWithAllPeers() { return Promise.resolve(new Map()); },
-          // Secure docs load via keyhive-encrypted network, not local storage.
-          // Reading from storage would bypass keyhive access control.
-          getBlobs(_sedimentreeId: any) { return Promise.resolve([]); },
+          // Only load from storage for docs the current identity owns —
+          // i.e., docs that were in the IDB doc list at init (which is
+          // keyhive-verified). This prevents loading another user's data
+          // from shared IndexedDB.
+          getBlobs(_sedimentreeId: any) {
+            if (!loadingDocId || !secureRepo?.storageSubsystem) {
+              console.log(`[worker] secure getBlobs: skip (loadingDocId=${loadingDocId}, ss=${!!secureRepo?.storageSubsystem})`);
+              return Promise.resolve([]);
+            }
+            if (getDocRepo(loadingDocId) !== 'secure') {
+              console.log(`[worker] secure getBlobs: skip (docRepo=${getDocRepo(loadingDocId)} for ${loadingDocId})`);
+              return Promise.resolve([]);
+            }
+            const docId = loadingDocId;
+            return secureRepo.storageSubsystem.loadDocData(docId)
+              .then((data: Uint8Array | null) => {
+                console.log(`[worker] secure getBlobs(${docId}): ${data ? data.length + ' bytes' : 'null'}`);
+                return data ? [data] : [];
+              });
+          },
           addCommit() { return Promise.resolve(undefined); },
           addFragment() { return Promise.resolve(undefined); },
         };
@@ -498,7 +515,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const repo = msg.secure ? secureRepo : insecureRepo;
       const doc = handle.doc();
       if (repo?.storageSubsystem && doc) {
-        void repo.storageSubsystem.saveDoc(docId, doc);
+        repo.storageSubsystem.saveDoc(docId, doc).then(() => {
+          console.log(`[worker] create-doc: saveDoc OK for ${docId}`);
+        }).catch((err: any) => {
+          console.error(`[worker] create-doc: saveDoc FAILED for ${docId}:`, err);
+        });
       }
       (self as any).postMessage({ type: 'result', id: msg.id, result: { docId, khDocId } } satisfies WorkerToMain);
     } catch (err: any) {

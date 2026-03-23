@@ -133,11 +133,10 @@ export class KeyhiveOps {
     await this.kh.addMember(agent, doc.toMembered(), access, []);
     await this.fx.persist();
     this.fx.syncKeyhive();
-    // Note: we intentionally do NOT call forceResyncAllPeers() here.
-    // That resets keyhiveSynced=false for all peers, causing ALL docs to be
-    // sent unencrypted during the re-sync window. The keyhive sync (above)
-    // delivers the membership ops; the new member will receive the doc data
-    // once their keyhive processes the membership and syncs back.
+    // Trigger automerge-repo to re-sync so the new member receives the doc data.
+    // This is safe: the network adapter drops doc messages while keyhiveSynced=false,
+    // so keyhive handshake completes first, then encrypted doc data flows.
+    this.fx.forceResyncAllPeers();
     return true;
   }
 
