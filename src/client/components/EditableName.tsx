@@ -1,49 +1,31 @@
-import { useState } from 'preact/hooks';
+import { useState, useCallback } from 'preact/hooks';
 import { getContactName, setContactName } from '../contact-names';
 
 export function EditableName({ agentId, suffix }: { agentId: string; suffix?: any }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
   const saved = getContactName(agentId);
+  const [draft, setDraft] = useState(saved || '');
+  const [dirty, setDirty] = useState(false);
 
-  const startEdit = () => {
-    setDraft(saved || '');
-    setEditing(true);
-  };
-
-  const commit = () => {
+  const save = useCallback(() => {
+    if (!dirty) return;
     setContactName(agentId, draft);
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        className="text-sm flex-1 border-b border-border bg-transparent outline-none px-0"
-        value={draft}
-        onInput={(e: any) => setDraft(e.currentTarget.value)}
-        onBlur={commit}
-        onKeyDown={(e: any) => {
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        autoFocus
-        placeholder={agentId.slice(0, 8) + '…'}
-      />
-    );
-  }
+    setDirty(false);
+  }, [agentId, draft, dirty]);
 
   return (
-    <span className="text-sm flex-1 truncate group" title={agentId}>
-      {saved || `${agentId.slice(0, 8)}…`}
+    <span className="flex items-center flex-1 gap-1">
+      <input
+        className="text-sm flex-1 bg-transparent outline-none px-0 min-w-0"
+        value={draft}
+        onInput={(e: any) => { setDraft(e.currentTarget.value); setDirty(true); }}
+        onBlur={save}
+        onKeyDown={(e: any) => {
+          if (e.key === 'Enter') { save(); e.currentTarget.blur(); }
+        }}
+        placeholder={agentId.slice(0, 12) + '…'}
+        title={agentId}
+      />
       {suffix}
-      <button
-        className="ml-1 opacity-0 group-hover:opacity-50 hover:!opacity-100 inline-flex align-middle"
-        onClick={(e: any) => { e.stopPropagation(); startEdit(); }}
-        title="Set friendly name"
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>edit</span>
-      </button>
     </span>
   );
 }

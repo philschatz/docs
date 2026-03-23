@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { EditableName } from '@/components/EditableName';
 import { getDocMembers, type MemberInfo } from '../shared/keyhive-api';
-import { getContactName } from '../contact-names';
+import { getContactName, getAllContactNames } from '../contact-names';
 import { getDocList } from '../doc-storage';
 import { type DocType, viewPathForType, iconForType } from '../shared/doc-type-helpers';
 
@@ -70,6 +70,14 @@ export function Contacts({ path }: { path?: string }) {
         }
       }
 
+      // Include named contacts that aren't members of any document yet
+      const allNames = getAllContactNames();
+      for (const agentId of Object.keys(allNames)) {
+        if (!map.has(agentId)) {
+          map.set(agentId, { agentId, isGroup: false, docs: [] });
+        }
+      }
+
       const sorted = [...map.values()].sort((a, b) => {
         const nameA = getContactName(a.agentId);
         const nameB = getContactName(b.agentId);
@@ -133,6 +141,9 @@ export function Contacts({ path }: { path?: string }) {
                 <EditableName agentId={contact.agentId} />
               </div>
               <div className="ml-6 mt-1 flex flex-col gap-0.5">
+                {contact.docs.length === 0 && (
+                  <span className="text-xs text-muted-foreground italic">No shared documents</span>
+                )}
                 {visibleDocs.map(d => (
                   <div key={d.docId} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{iconForType(d.docType)}</span>

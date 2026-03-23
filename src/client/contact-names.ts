@@ -20,6 +20,11 @@ export function getContactName(agentId: string): string | undefined {
   return cache[agentId];
 }
 
+/** Return a snapshot of all saved contact names (agentId → name). */
+export function getAllContactNames(): Record<string, string> {
+  return { ...cache };
+}
+
 export function setContactName(agentId: string, name: string): void {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -27,6 +32,7 @@ export function setContactName(agentId: string, name: string): void {
     return;
   }
   cache[agentId] = trimmed;
+  if (!dispatch) console.warn('[contact-names] dispatch not set — name will not persist');
   dispatch?.('set-contact-name', agentId, trimmed);
 }
 
