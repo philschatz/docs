@@ -80,14 +80,12 @@ self.onmessage = (e: MessageEvent) => { pendingMessages.push(e); };
 let Repo: any, IndexedDBStorageAdapter: any, Automerge: any;
 let BrowserWebSocketClientAdapter: any;
 let PresenceClass: any;
-let toDocumentId: (sedimentreeId: any) => string;
 let khBridge: typeof import('../lib/automerge-repo-keyhive/index') | null = null;
 try {
   console.log('[worker] importing modules...');
   await import('@automerge/automerge-subduction'); // Initialize subduction WASM before Repo construction
   const repoModule: any = await import('@automerge/automerge-repo');
   Repo = repoModule.Repo;
-  toDocumentId = repoModule.toDocumentId;
   PresenceClass = repoModule.Presence;
   console.log('[worker] Repo imported');
   ({ IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb'));
@@ -108,6 +106,15 @@ let khIntegration: InstanceType<typeof khBridge.AutomergeRepoKeyhive> | null = n
 let khOps: KeyhiveOps | null = null;
 let setNextDocId: ((bytes: Uint8Array) => void) | null = null;
 let appBaseUrl = '';
+
+/**
+ * The docId currently being loaded via getOrLoadHandle → repo.find().
+ * getBlobs receives a sedimentreeId but toDocumentId() truncates 32-byte
+ * keyhive IDs to 16 bytes, producing the wrong storage key. Instead of
+ * reverse-mapping, we stash the docId before calling find() so getBlobs
+ * can read it directly.
+ */
+let loadingDocId: string | null = null;
 
 /** Pick the correct repo for a given docId based on the docRepoMap. */
 function getRepo(docId: string): InstanceType<typeof Repo> {
@@ -132,7 +139,9 @@ async function getOrLoadHandle(docId: string): Promise<any> {
   const existing = docRegistry.get(docId);
   if (existing) return existing.handle;
   const r = getRepo(docId);
+  loadingDocId = docId;
   const handle = await r.find(docId as any);
+  loadingDocId = null;
   return handle;
 }
 
@@ -302,7 +311,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           disconnectFromPeer() {},
           syncAll() { return Promise.resolve({ entries() { return []; } }); },
           syncWithAllPeers() { return Promise.resolve(new Map()); },
-          getBlobs() { return Promise.resolve([]); },
+          getBlobs(_sedimentreeId: any) {
+            if (!loadingDocId || !insecureRepo?.storageSubsystem) return Promise.resolve([]);
+            return insecureRepo.storageSubsystem.loadDocData(loadingDocId)
+              .then((data: Uint8Array | null) => data ? [data] : []);
+          },
           addCommit() { return Promise.resolve(undefined); },
           addFragment() { return Promise.resolve(undefined); },
         };
@@ -358,15 +371,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           disconnectFromPeer() {},
           syncAll() { return Promise.resolve({ entries() { return []; } }); },
           syncWithAllPeers() { return Promise.resolve(new Map()); },
-          getBlobs(sedimentreeId: any) {
-            if (!secureRepo?.storageSubsystem) return Promise.resolve([]);
-            try {
-              const docId = toDocumentId(sedimentreeId);
-              return secureRepo.storageSubsystem.loadDocData(docId)
-                .then((data: Uint8Array | null) => data ? [data] : []);
-            } catch {
-              return Promise.resolve([]);
-            }
+          getBlobs(_sedimentreeId: any) {
+            if (!loadingDocId || !secureRepo?.storageSubsystem) return Promise.resolve([]);
+            return secureRepo.storageSubsystem.loadDocData(loadingDocId)
+              .then((data: Uint8Array | null) => data ? [data] : []);
           },
           addCommit() { return Promise.resolve(undefined); },
           addFragment() { return Promise.resolve(undefined); },
@@ -429,6 +437,21 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       type StoredDocEntry = { id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string };
       const docList = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
       populateDocRepoMap(docList);
+
+      // Re-register keyhive doc mappings so the network adapter can decrypt
+      // sync messages for docs we already know about from previous sessions.
+      if (khOps && khIntegration) {
+        for (const entry of docList) {
+          if (entry.encrypted && entry.khDocId) {
+            try {
+              khOps.registerDocMapping(entry.id, entry.khDocId);
+            } catch (err) {
+              console.warn(`[worker] Failed to re-register doc ${entry.id}:`, errMsg(err));
+            }
+          }
+        }
+      }
+
       (self as any).postMessage({ type: 'doc-list-updated', list: docList } satisfies WorkerToMain);
 
       // Prune invite records for docs no longer in the list
@@ -471,6 +494,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       }
       const docId = handle.documentId;
       setDocRepo(docId, msg.secure ? 'secure' : 'insecure');
+      // Repo.create() registers the save listener AFTER the initial handle.update(),
+      // so the first heads-changed event is missed and the initial doc is never persisted.
+      // Explicitly save to ensure the initial data survives a refresh.
+      const repo = msg.secure ? secureRepo : insecureRepo;
+      const doc = handle.doc();
+      if (repo?.storageSubsystem && doc) {
+        void repo.storageSubsystem.saveDoc(docId, doc);
+      }
       (self as any).postMessage({ type: 'result', id: msg.id, result: { docId, khDocId } } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
@@ -733,14 +764,13 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const { idbGet, idbSet } = await import('./idb-storage');
       type StoredDocEntry = { id: string; [key: string]: any };
       const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
-      const { docId, type: _type, ...rest } = msg;
-      const metadata = { ...rest };
-      const idx = list.findIndex(e => e.id === docId);
+      const metadata = msg.metadata ?? {};
+      const idx = list.findIndex(e => e.id === msg.docId);
       if (idx >= 0) {
-        list[idx] = { ...list[idx], ...metadata, id: docId };
+        list[idx] = { ...list[idx], ...metadata, id: msg.docId };
         list.unshift(list.splice(idx, 1)[0]);
       } else {
-        list.unshift({ id: docId, ...metadata });
+        list.unshift({ id: msg.docId, ...metadata });
       }
       await idbSet('automerge-doc-ids', list);
       (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);

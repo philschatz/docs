@@ -27,8 +27,8 @@ const worker = new Worker(
 initKeyhiveApi(worker);
 
 // --- Wire up dispatch hooks (avoids circular imports) ---
-setDocListDispatch((type, docId, metadata) => {
-  worker.postMessage({ type, docId, ...metadata });
+setDocListDispatch((msgType, docId, metadata) => {
+  worker.postMessage({ type: msgType, docId, metadata });
 });
 setContactNamesDispatch((type, agentId, name) => {
   worker.postMessage({ type, agentId, ...(name !== undefined ? { name } : {}) });
