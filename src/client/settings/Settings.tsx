@@ -23,6 +23,9 @@ export function Settings({ path }: { path?: string }) {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);
   const [friendQrUrl, setFriendQrUrl] = useState('');
+  const [displayName, setDisplayName] = useState(
+    () => localStorage.getItem('my-display-name') || ''
+  );
   const [linkDeviceUrl, setLinkDeviceUrl] = useState('');
   const [linkInput, setLinkInput] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
@@ -57,10 +60,17 @@ export function Settings({ path }: { path?: string }) {
     }
   };
 
+  const handleDisplayNameChange = (value: string) => {
+    setDisplayName(value);
+    localStorage.setItem('my-display-name', value);
+    setFriendQrUrl('');
+  };
+
   const handleShowFriendQr = async () => {
     try {
       const card = await getContactCard();
-      setFriendQrUrl(buildAddFriendUrl(card));
+      const trimmed = displayName.trim();
+      setFriendQrUrl(buildAddFriendUrl(card, trimmed || undefined));
     } catch (err: any) {
       setError(err.message);
     }
@@ -306,6 +316,14 @@ export function Settings({ path }: { path?: string }) {
         <p className="text-xs text-muted-foreground mb-2">
           Show this QR code to a friend so they can add you as a contact and share documents with you.
         </p>
+        <div className="mb-2">
+          <input
+            className="w-full text-sm p-2 rounded border border-border"
+            value={displayName}
+            onInput={(e: any) => handleDisplayNameChange(e.currentTarget.value)}
+            placeholder="Display name (optional)"
+          />
+        </div>
         <Button size="sm" variant="outline" onClick={handleShowFriendQr}>
           Show QR code
         </Button>

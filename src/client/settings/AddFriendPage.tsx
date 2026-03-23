@@ -43,9 +43,25 @@ export function encodeCardForUrl(cardJson: string): string {
   return bytesToB64url(compressed);
 }
 
-export function buildAddFriendUrl(cardJson: string): string {
+export function buildAddFriendUrl(cardJson: string, displayName?: string): string {
+  const payload = displayName
+    ? JSON.stringify({ card: cardJson, displayName })
+    : cardJson;
   const base = window.location.origin + window.location.pathname;
-  return `${base}#/add-friend/${encodeCardForUrl(cardJson)}`;
+  return `${base}#/add-friend/${encodeCardForUrl(payload)}`;
+}
+
+function decodeFriendData(b64url: string): { cardJson: string; displayName?: string } {
+  const raw = decodeCardFromUrl(b64url);
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.card === 'string') {
+      return { cardJson: parsed.card, displayName: parsed.displayName };
+    }
+  } catch {
+    // Not the wrapper format — old-style raw card
+  }
+  return { cardJson: raw };
 }
 
 export function AddFriendPage({ cardData }: AddFriendPageProps) {
@@ -66,7 +82,7 @@ export function AddFriendPage({ cardData }: AddFriendPageProps) {
 
     try {
       setStatus('Decoding contact card...');
-      const cardJson = decodeCardFromUrl(cardData);
+      const { cardJson, displayName } = decodeFriendData(cardData);
 
       setStatus('Adding contact...');
       const result = await receiveContactCard(cardJson);
@@ -75,6 +91,7 @@ export function AddFriendPage({ cardData }: AddFriendPageProps) {
         return;
       }
       setAgentId(result.agentId);
+      if (displayName) setName(displayName);
 
       setStatus('Contact added. Give them a name so you can recognize them later.');
     } catch (err: any) {
