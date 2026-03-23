@@ -12,11 +12,10 @@ import relativeTimePlugin from 'dayjs/plugin/relativeTime';
 dayjs.extend(relativeTimePlugin);
 import { a1ToInternal } from '@/datagrid/helpers';
 import { getDocList, addDocId, removeDocId, updateDocCache, onDocListUpdated } from '@/doc-storage';
+import { type DocType, viewPathForType, iconForType } from '@/shared/doc-type-helpers';
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_TIME__: string;
-
-type DocType = 'Calendar' | 'TaskList' | 'DataGrid' | 'unknown';
 
 interface DocEntry {
   type: DocType;
@@ -32,20 +31,6 @@ interface DocEntry {
 function relativeTime(ts: string | null): string {
   if (!ts) return '';
   return dayjs(ts).fromNow();
-}
-
-function viewPathForType(type: DocType, documentId: string): string {
-  if (type === 'Calendar') return `#/calendars/${documentId}`;
-  if (type === 'TaskList') return `#/tasks/${documentId}`;
-  if (type === 'DataGrid') return `#/datagrids/${documentId}`;
-  return `#/source/${documentId}`;
-}
-
-function iconForType(type: DocType): string {
-  if (type === 'Calendar') return 'date_range';
-  if (type === 'TaskList') return 'checklist';
-  if (type === 'DataGrid') return 'grid_on';
-  return 'help';
 }
 
 function initialEntries(): DocEntry[] {
@@ -445,6 +430,11 @@ export function Home({ path }: { path?: string }) {
         <a href="#/calendars/">
           <Button variant="outline">
             <span className="material-symbols-outlined">date_range</span> All calendars
+          </Button>
+        </a>
+        <a href="#/contacts">
+          <Button variant="outline">
+            <span className="material-symbols-outlined">contacts</span> Contacts
           </Button>
         </a>
         <a href="#/settings">

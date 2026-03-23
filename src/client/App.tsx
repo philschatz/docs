@@ -6,6 +6,7 @@ import { Tasks } from './tasks/Tasks';
 import { SourceViewer } from './source/SourceViewer';
 import { DataGrid } from './datagrid/DataGrid';
 import { Settings } from './settings/Settings';
+import { Contacts } from './contacts/Contacts';
 import { LinkDevicePage } from './settings/LinkDevicePage';
 import { AddFriendPage } from './settings/AddFriendPage';
 import { InvitePage } from './invite/InvitePage';
@@ -20,6 +21,7 @@ export function App() {
     <Router history={hashHistory}>
       <Home path="/" />
       <Settings path="/settings" />
+      <Contacts path="/contacts" />
       <LinkDevicePage path="/link-device/:cardData" />
       <AddFriendPage path="/add-friend/:cardData" />
       <InvitePage path="/invite/:docId/:docType/:inviteKey" />
