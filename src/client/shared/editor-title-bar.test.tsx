@@ -9,6 +9,7 @@ jest.mock('./automerge', () => ({
 
 jest.mock('./presence', () => ({
   peerColor: (id: string) => `#${id.slice(0, 6)}`,
+  peerDisplayName: (id: string) => `Peer ${id.slice(0, 8)}`,
 }));
 
 jest.mock('./keyhive-api', () => ({

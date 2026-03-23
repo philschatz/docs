@@ -940,7 +940,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (!khOps) throw new Error('Keyhive not available');
       const { idbGet } = await import('./idb-storage');
       const linkedIds = (await idbGet<string[]>('linked-devices')) ?? [];
-      const myId = khOps.getIdentity().deviceId;
+      const myId = (await khOps.getIdentity()).deviceId;
       const devices: { agentId: string; role: string; isMe?: boolean }[] = [
         { agentId: myId, role: 'owner', isMe: true },
       ];

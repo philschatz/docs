@@ -66,8 +66,12 @@ export class KeyhiveOps {
     this.fx = sideEffects;
   }
 
-  getIdentity(): { deviceId: string } {
-    return { deviceId: String(this.kh.idString) };
+  async getIdentity(): Promise<{ deviceId: string; agentId: string }> {
+    const me = await this.kh.individual;
+    return {
+      deviceId: String(this.kh.idString),
+      agentId: bytesToBase64(me.id.toBytes()),
+    };
   }
 
   async getContactCard(): Promise<string> {

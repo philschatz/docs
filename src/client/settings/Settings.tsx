@@ -15,6 +15,7 @@ import {
   type DeviceInfo,
 } from '../shared/keyhive-api';
 import { idbGet, idbSet } from '../idb-storage';
+import { getContactName, setContactName } from '../contact-names';
 import { QRCodeDisplay } from '@/components/ui/qr-code';
 import { buildLinkDeviceUrl } from './LinkDevicePage';
 import { buildAddFriendUrl } from './AddFriendPage';
@@ -23,9 +24,7 @@ export function Settings({ path }: { path?: string }) {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [contactCard, setContactCard] = useState<string | null>(null);
   const [friendQrUrl, setFriendQrUrl] = useState('');
-  const [displayName, setDisplayName] = useState(
-    () => localStorage.getItem('my-display-name') || ''
-  );
+  const [displayName, setDisplayName] = useState('');
   const [linkDeviceUrl, setLinkDeviceUrl] = useState('');
   const [linkInput, setLinkInput] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
@@ -40,6 +39,7 @@ export function Settings({ path }: { path?: string }) {
         listDevices(),
       ]);
       setIdentity(id);
+      setDisplayName(getContactName(id.agentId) || '');
       setDevices(devs);
     } catch (err: any) {
       setError(err.message);
@@ -62,7 +62,7 @@ export function Settings({ path }: { path?: string }) {
 
   const handleDisplayNameChange = (value: string) => {
     setDisplayName(value);
-    localStorage.setItem('my-display-name', value);
+    if (identity?.agentId) setContactName(identity.agentId, value);
     setFriendQrUrl('');
   };
 
