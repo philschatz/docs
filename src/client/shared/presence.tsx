@@ -1,5 +1,6 @@
 import { subscribePresence, setPresence } from '../worker-api';
 import type { PeerState } from './automerge';
+import { getContactName } from '../contact-names';
 
 const PEER_COLORS = [
   '#e91e63', '#9c27b0', '#673ab7', '#3f51b5',
@@ -9,6 +10,11 @@ const PEER_COLORS = [
 export interface PresenceState {
   viewing: boolean;
   focusedField: (string | number)[] | null;
+}
+
+export function peerDisplayName(peerId: string): string {
+  const agentId = peerId.split('-')[0];
+  return getContactName(agentId) || `${agentId.slice(0, 8)}…`;
 }
 
 export function peerColor(peerId: string): string {
@@ -50,7 +56,7 @@ export function PresenceDot({ fieldId, peerFocusedFields }: {
     <div
       className="w-2 h-2 rounded-full shrink-0 inline-block"
       style={{ backgroundColor: info.color }}
-      title={`Peer ${info.peerId.slice(0, 8)} is editing`}
+      title={`${peerDisplayName(info.peerId)} is editing`}
     />
   );
 }

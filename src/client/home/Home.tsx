@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useConnectionStatus, usePeerList } from '../shared/automerge';
 import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
-import { peerColor } from '../shared/presence';
+import { peerColor, peerDisplayName } from '../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
@@ -408,7 +408,7 @@ export function Home({ path }: { path?: string }) {
             key={peerId}
             className="w-2 h-2 rounded-full inline-block shrink-0"
             style={{ backgroundColor: peerColor(peerId) }}
-            title={`Peer ${peerId.slice(0, 8)}`}
+            title={peerDisplayName(peerId)}
           />
         ))}
       </div>
@@ -510,7 +510,7 @@ export function Home({ path }: { path?: string }) {
                     key={peerId}
                     className="w-2 h-2 rounded-full inline-block shrink-0"
                     style={{ backgroundColor: peerColor(peerId) }}
-                    title={`Peer ${peerId.slice(0, 8)} is viewing`}
+                    title={`${peerDisplayName(peerId)} is viewing`}
                   />
                 ))}
               </a>

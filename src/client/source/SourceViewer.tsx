@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks'
 import type { PeerState } from '../shared/automerge';
 import { openDoc, subscribeQuery, updateDoc, getDocHistory, debugGetVersionPatches, setDocVersion } from '../worker-api';
 import { getDocEntry, updateDocCache } from '../doc-storage';
-import { peerColor, initPresence, type PresenceState } from '../shared/presence';
+import { peerColor, peerDisplayName, initPresence, type PresenceState } from '../shared/presence';
 import { EditorTitleBar } from '../shared/EditorTitleBar';
 import { HistorySlider } from '../shared/HistorySlider';
 import type { DocumentHistory } from '../shared/useDocumentHistory';
@@ -418,7 +418,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
         }}
         docId={docId}
         peers={peerList}
-        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value?.focusedField ? ' (editing)' : ''}`}
+        peerTitle={(peer) => `${peerDisplayName(peer.peerId)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         showSourceLink={false}
         khDocId={docId ? getDocEntry(docId)?.khDocId : undefined}
         sharingGroupId={docId ? getDocEntry(docId)?.sharingGroupId : undefined}

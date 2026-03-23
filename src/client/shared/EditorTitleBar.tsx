@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { useWsStatus, getWorkerPeerId } from './automerge';
-import { peerColor } from './presence';
+import { peerColor, peerDisplayName } from './presence';
 import { AccessControl } from '../components/AccessControl';
 import { enableSharing, registerSharingGroup, registerDocMapping } from './keyhive-api';
 import { useAccess } from './useAccess';
@@ -115,7 +115,7 @@ export function EditorTitleBar<P extends PeerLike>({
             <div
               key={peer.peerId}
               style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, backgroundColor: peerColor(peer.peerId) }}
-              title={peerTitle ? peerTitle(peer) : `Peer ${peer.peerId}`}
+              title={peerTitle ? peerTitle(peer) : peerDisplayName(peer.peerId)}
             />
           ))}
         </div>

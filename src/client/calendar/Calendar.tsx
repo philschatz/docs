@@ -3,7 +3,7 @@ import '@schedule-x/theme-default/dist/index.css';
 import './calendar.css';
 import { subscribeQuery, updateDoc, deepAssign } from '../worker-api';
 import type { PeerState } from '../shared/automerge';
-import { initPresence, type PresenceState } from '../shared/presence';
+import { peerDisplayName, initPresence, type PresenceState } from '../shared/presence';
 import { EditorTitleBar } from '../shared/EditorTitleBar';
 import { useDocumentHistory } from '../shared/useDocumentHistory';
 import { useAccess } from '../shared/useAccess';
@@ -189,7 +189,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         }}
         docId={docId}
         peers={peerList}
-        peerTitle={(peer) => `Peer ${peer.peerId.slice(0, 8)}${peer.value?.focusedField ? ' (editing)' : ''}`}
+        peerTitle={(peer) => `${peerDisplayName(peer.peerId)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
         khDocId={getDocEntry(docId)?.khDocId}
