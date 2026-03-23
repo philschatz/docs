@@ -1291,7 +1291,7 @@ describe('KeyhiveOps', () => {
       return { khDocId, bobAgentId };
     }
 
-    it('addMember calls forceResyncAllPeers so the doc is pushed to the new member', async () => {
+    it('addMember does NOT call forceResyncAllPeers (avoids unencrypted resync window)', async () => {
       const { ops: opsA, kh: khA, fx: fxA } = await createOps();
       const { ops: opsB, kh: khB } = await createOps();
 
@@ -1304,7 +1304,10 @@ describe('KeyhiveOps', () => {
         automergeDocIdBytes,
       });
 
-      expect(fxA.calls.forceResyncAllPeers.length).toBe(resyncCountBefore + 1);
+      // forceResyncAllPeers resets keyhiveSynced=false for all peers, causing
+      // ALL docs to be sent unencrypted during the re-sync. addMember only
+      // calls syncKeyhive() to deliver membership ops via the keyhive channel.
+      expect(fxA.calls.forceResyncAllPeers.length).toBe(resyncCountBefore);
     });
 
     it('after sync, Bob can discover the document via reachableDocs', async () => {

@@ -133,7 +133,11 @@ export class KeyhiveOps {
     await this.kh.addMember(agent, doc.toMembered(), access, []);
     await this.fx.persist();
     this.fx.syncKeyhive();
-    this.fx.forceResyncAllPeers();
+    // Note: we intentionally do NOT call forceResyncAllPeers() here.
+    // That resets keyhiveSynced=false for all peers, causing ALL docs to be
+    // sent unencrypted during the re-sync window. The keyhive sync (above)
+    // delivers the membership ops; the new member will receive the doc data
+    // once their keyhive processes the membership and syncs back.
     return true;
   }
 

@@ -609,16 +609,23 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       // Pre-compute SHA-256 hash outside WASM (native crypto API, safe to call concurrently)
       const automergeDocId = (message as any).documentId as string | undefined;
       const targetId = (message as any).targetId as PeerId | undefined;
-      // Don't encrypt for peers who haven't completed keyhive sync — they don't
-      // have the CGKA keys yet and would buffer/drop the message. After keyhive
-      // sync confirms, keyhiveSynced becomes true and encryption kicks in.
-      const peerReady = !targetId || (this.peers.get(targetId)?.keyhiveSynced !== false);
-      const shouldEncrypt =
+      const isDocMessage =
         automergeDocId !== undefined &&
         this.docMap.has(automergeDocId) &&
         (message.type === "sync" || message.type === "change") &&
-        data.length > 0 &&
-        peerReady;
+        data.length > 0;
+      // If this is a doc message targeted at a peer that hasn't completed
+      // keyhive sync, drop it. The peer doesn't have CGKA keys yet and we
+      // must not send doc content unencrypted. After keyhive sync completes
+      // and keyhiveSynced becomes true, automerge-repo will re-sync.
+      if (isDocMessage && targetId) {
+        const peer = this.peers.get(targetId);
+        if (peer && !peer.keyhiveSynced) {
+          this.pending.fire(seqNumber, () => {});
+          return;
+        }
+      }
+      const shouldEncrypt = isDocMessage;
       if (automergeDocId && (message.type === "sync" || message.type === "change")) {
       }
       let hashBuf: ArrayBuffer | undefined;

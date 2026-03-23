@@ -371,11 +371,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           disconnectFromPeer() {},
           syncAll() { return Promise.resolve({ entries() { return []; } }); },
           syncWithAllPeers() { return Promise.resolve(new Map()); },
-          getBlobs(_sedimentreeId: any) {
-            if (!loadingDocId || !secureRepo?.storageSubsystem) return Promise.resolve([]);
-            return secureRepo.storageSubsystem.loadDocData(loadingDocId)
-              .then((data: Uint8Array | null) => data ? [data] : []);
-          },
+          // Secure docs load via keyhive-encrypted network, not local storage.
+          // Reading from storage would bypass keyhive access control.
+          getBlobs(_sedimentreeId: any) { return Promise.resolve([]); },
           addCommit() { return Promise.resolve(undefined); },
           addFragment() { return Promise.resolve(undefined); },
         };
