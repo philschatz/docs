@@ -359,7 +359,6 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           onlyShareWithHardcodedServerPeerId: false,
           periodicallyRequestSync: true,
           automaticArchiveIngestion: true,
-          cacheHashes: false,
           syncRequestInterval: 2000,
         });
 

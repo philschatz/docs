@@ -74,7 +74,6 @@ export async function initCaldavKeyhive(
     onlyShareWithHardcodedServerPeerId: false,
     periodicallyRequestSync: true,
     automaticArchiveIngestion: true,
-    cacheHashes: false,
     syncRequestInterval: 2000,
   });
 
