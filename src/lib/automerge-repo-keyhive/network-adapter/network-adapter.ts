@@ -4,6 +4,7 @@ import {
   PeerId,
   PeerMetadata,
 } from "@automerge/automerge-repo/slim";
+// FORK: CGKA encryption — additional keyhive types for encrypt/decrypt
 import {
   ChangeId,
   ContactCard,
@@ -13,368 +14,158 @@ import {
   Identifier,
   Keyhive,
 } from "@keyhive/keyhive/slim";
-import { encode, decode } from "cbor-x";
-import { cborByteString, buildSyncResponseCbor, buildCborByteStringArray, buildSyncOpsCbor } from "./cbor-builder";
-
-interface EventBytesResult {
-  events: Uint8Array[];
-  cborEvents: Uint8Array[];
-}
-
 import {
   decodeKeyhiveMessageData,
   ENC_ENCRYPTED,
-  KeyhiveMessageData,
   signData,
   verifyData,
 } from "./messages";
 import { PromiseQueue, Pending } from "./pending";
-import { OpCache } from "./op-cache";
-import { getEventsForAgent, getEventHashesForAgent, keyhiveIdentifierFromPeerId, isKeyhivePeerId } from "../utilities";
+import { Metrics } from "./metrics";
+import type { EventCache } from "./event-cache";
+import { StandardEventCache } from "./standard-event-cache";
+import { EventBytesOnlyEventCache } from "./event-bytes-only-event-cache";
+import { PeriodicEventCache } from "./periodic-event-cache";
+import { MessageBatch, BatchProcessor } from "./batch";
 import {
-  getPendingOpHashes,
   KeyhiveStorage,
-  receiveContactCard,
 } from "../keyhive/keyhive";
+import { SyncProtocol } from "./sync-protocol";
+import { Peer } from "./peer";
+// FORK: CGKA encryption — detect keyhive peers for signature verification
+import { isKeyhivePeerId, keyhiveIdentifierFromPeerId } from "../utilities";
 
-
-// Map from hash string to hash bytes
-type PeerHashes = Map<string, Uint8Array>;
-
-type KeyhiveMessage = {
-  msg: Message;
-  data: KeyhiveMessageData;
+export interface KeyhiveNetworkAdapterOptions {
+  networkAdapter: NetworkAdapter;
+  contactCard: ContactCard;
+  keyhive: Keyhive;
+  keyhiveStorage: KeyhiveStorage;
+  keyhiveQueue: PromiseQueue;
+  periodicallyRequestSync: boolean;
+  cachingMode?: "none" | "standard" | "periodic";
+  // TODO: Replace with dynamic configuration
+  hardcodedRemoteId?: PeerId | null;
+  syncRequestInterval: number;
+  batchInterval?: number;
+  retryPendingFromStorage?: boolean;
+  enableCompaction?: boolean;
+  archiveThreshold?: number;
 }
-
-class Metrics {
-  private msgTypeCounts: Record<string, number> = {};
-  private totalPayloadBytes = 0;
-  private uniqueSenders = new Set<string>();
-  private nonKeyhiveCount = 0;
-  private droppedSyncRequests = 0;
-  private messageCount = 0;
-  private totalProcessingTimeMs = 0;
-  private publicHashCount = 0;
-  private publicEventCount = 0;
-
-  // #1 Per-type processing time
-  private processingTimeByType: Record<string, number> = {};
-  // #2 Event count
-  private totalOps: bigint = 0n;
-  // #3 Hash/event lookup timing
-  private hashLookupTimeMs = 0;
-  private eventLookupTimeMs = 0;
-  // #4 Cache hit/miss
-  private cacheHits = 0;
-  private cacheMisses = 0;
-  // #5 Queue wait time
-  private totalQueueWaitMs = 0;
-  // #6 Ingestion metrics
-  private ingestCount = 0;
-  private eventsIngested = 0;
-  private pendingAfterIngest = 0;
-  private storageRetries = 0;
-  // #7 Ops sent/requested
-  private opsSent = 0;
-  private opsRequested = 0;
-  // #8 Sync check metrics
-  private syncChecksSent = 0;
-  private syncChecksReceived = 0;
-  private syncChecksShortCircuited = 0;
-  private syncChecksFallback = 0;
-  private syncConfirmationsSent = 0;
-  private syncConfirmationsReceived = 0;
-
-  recordMessage(msgType: string | undefined, senderId: string | undefined, payloadBytes: number) {
-    const type = msgType ?? "unknown";
-    this.msgTypeCounts[type] = (this.msgTypeCounts[type] ?? 0) + 1;
-    this.totalPayloadBytes += payloadBytes;
-    if (senderId) this.uniqueSenders.add(senderId);
-    this.messageCount++;
-  }
-
-  recordNonKeyhive() {
-    this.nonKeyhiveCount++;
-  }
-
-  recordDroppedSyncRequest() {
-    this.droppedSyncRequests++;
-  }
-
-  recordProcessingTime(ms: number) {
-    this.totalProcessingTimeMs += ms;
-  }
-
-  recordPublicLookups(hashCount: number, eventCount: number) {
-    this.publicHashCount += hashCount;
-    this.publicEventCount += eventCount;
-  }
-
-  recordProcessingTimeByType(msgType: string, ms: number) {
-    this.processingTimeByType[msgType] = (this.processingTimeByType[msgType] ?? 0) + ms;
-  }
-
-  recordTotalOps(ops: bigint) {
-    this.totalOps = ops;
-  }
-
-  recordHashLookupTime(ms: number) {
-    this.hashLookupTimeMs += ms;
-  }
-
-  recordEventLookupTime(ms: number) {
-    this.eventLookupTimeMs += ms;
-  }
-
-  recordCacheHit() {
-    this.cacheHits++;
-  }
-
-  recordCacheMiss() {
-    this.cacheMisses++;
-  }
-
-  recordQueueWait(ms: number) {
-    this.totalQueueWaitMs += ms;
-  }
-
-  recordIngestion(eventsCount: number, pendingCount: number) {
-    this.ingestCount++;
-    this.eventsIngested += eventsCount;
-    this.pendingAfterIngest += pendingCount;
-  }
-
-  recordStorageRetry() {
-    this.storageRetries++;
-  }
-
-  recordOpsSent(count: number) {
-    this.opsSent += count;
-  }
-
-  recordOpsRequested(count: number) {
-    this.opsRequested += count;
-  }
-
-  recordSyncCheckSent() { this.syncChecksSent++; }
-  recordSyncCheckReceived() { this.syncChecksReceived++; }
-  recordSyncCheckShortCircuited() { this.syncChecksShortCircuited++; }
-  recordSyncCheckFallback() { this.syncChecksFallback++; }
-  recordSyncConfirmationSent() { this.syncConfirmationsSent++; }
-  recordSyncConfirmationReceived() { this.syncConfirmationsReceived++; }
-
-  hasActivity(): boolean {
-    return this.messageCount > 0 || this.nonKeyhiveCount > 0;
-  }
-
-  logReport(label: string) {
-  }
-
-  reset() {
-    this.msgTypeCounts = {};
-    this.totalPayloadBytes = 0;
-    this.uniqueSenders = new Set();
-    this.nonKeyhiveCount = 0;
-    this.droppedSyncRequests = 0;
-    this.messageCount = 0;
-    this.totalProcessingTimeMs = 0;
-    this.publicHashCount = 0;
-    this.publicEventCount = 0;
-    this.processingTimeByType = {};
-    this.totalOps = 0n;
-    this.hashLookupTimeMs = 0;
-    this.eventLookupTimeMs = 0;
-    this.cacheHits = 0;
-    this.cacheMisses = 0;
-    this.totalQueueWaitMs = 0;
-    this.ingestCount = 0;
-    this.eventsIngested = 0;
-    this.pendingAfterIngest = 0;
-    this.storageRetries = 0;
-    this.opsSent = 0;
-    this.opsRequested = 0;
-    this.syncChecksSent = 0;
-    this.syncChecksReceived = 0;
-    this.syncChecksShortCircuited = 0;
-    this.syncChecksFallback = 0;
-    this.syncConfirmationsSent = 0;
-    this.syncConfirmationsReceived = 0;
-  }
-}
-
-class MessageBatch {
-  readonly messages: KeyhiveMessage[] = [];
-  readonly metrics = new Metrics();
-  private readonly syncRequestSenders = new Set<string>();
-
-  add(msg: Message, data: KeyhiveMessageData) {
-    if (msg.type === "keyhive-sync-request" && msg.senderId) {
-      if (this.syncRequestSenders.has(msg.senderId)) {
-        this.metrics.recordDroppedSyncRequest();
-        return;
-      }
-      this.syncRequestSenders.add(msg.senderId);
-    }
-    this.metrics.recordMessage(msg.type, msg.senderId, data.signed.payload?.byteLength ?? 0);
-    this.messages.push({ msg, data });
-  }
-
-  countNonKeyhive() {
-    this.metrics.recordNonKeyhive();
-  }
-
-  get isEmpty(): boolean {
-    return !this.metrics.hasActivity();
-  }
-}
-
-class BatchProcessor {
-  private timeoutId?: ReturnType<typeof setTimeout>;
-
-  constructor(
-    private readonly batchInterval: number,
-    private readonly keyhive: Keyhive,
-    private readonly handleMessage: (msg: Message, data: KeyhiveMessageData, metrics: Metrics) => Promise<void>,
-    private readonly swapBatch: () => MessageBatch,
-  ) {}
-
-  start() {
-    this.scheduleNext();
-  }
-
-  stop() {
-    if (this.timeoutId !== undefined) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = undefined;
-    }
-  }
-
-  private scheduleNext() {
-    this.timeoutId = setTimeout(() => { void this.processAndReschedule() }, this.batchInterval);
-  }
-
-  private async processAndReschedule() {
-    const batch = this.swapBatch();
-    if (!batch.isEmpty) {
-      await this.processBatch(batch);
-    }
-    this.scheduleNext();
-  }
-
-  private async processBatch(batch: MessageBatch) {
-    const startTime = Date.now();
-    for (const { msg, data } of batch.messages) {
-      try {
-        const msgStart = Date.now();
-        await this.handleMessage(msg, data, batch.metrics);
-        batch.metrics.recordProcessingTimeByType(msg.type ?? "unknown", Date.now() - msgStart);
-      } catch (error) {
-        console.error(`[AMRepoKeyhive] Error processing batch message (type=${msg.type}, from=${msg.senderId}):`, error);
-      }
-    }
-    batch.metrics.recordProcessingTime(Date.now() - startTime);
-    const stats = await this.keyhive.stats();
-    batch.metrics.recordTotalOps(stats.totalOps);
-    batch.metrics.logReport("Batch");
-  }
-}
-
-class Peer {
-  lastKeyhiveRequestRcvd: Date = new Date();
-  lastKeyhiveRequestSent: Date = new Date();
-  // Null until first full sync completes with this peer
-  beliefCounts: {
-    myTotalForThem: number;    // my hash count for them (recomputable but cached)
-    theirTotalForMe: number;   // my belief about their hash count for me (learned from them)
-  } | null = null;
-  // When true, forces a full sync request instead of a lightweight check.
-  // Set when new CGKA ops are generated locally (e.g., during encryption).
-  // Cleared after the full sync request is sent.
-  forceFullSync: boolean = false;
-  // Whether keyhive sync has completed with this peer. When false, outgoing
-  // sync messages are sent unencrypted to avoid the deadlock where A encrypts
-  // with a PCS key B doesn't have (B not yet in A's CGKA tree).
-  // Set to true after keyhive-sync-confirmation is sent or received.
-  // Reset to false by forceResyncAllPeers() when CGKA state changes.
-  keyhiveSynced: boolean = false;
-  constructor() {}
-};
 
 export class KeyhiveNetworkAdapter extends NetworkAdapter {
   private pending = new Pending();
-  // Connected peers and metadata
   private peers: Map<PeerId, Peer> = new Map();
-  private syncIntervalId?: ReturnType<typeof setInterval> | undefined;
+  private syncIntervalId?: ReturnType<typeof setInterval>;
   private compactionIntervalId?: ReturnType<typeof setInterval>;
   private batchProcessor?: BatchProcessor;
 
-  private cacheHashes: boolean;
-  // Old per-message cache fields (only used when cacheHashes=false)
-  private hashesCache: Map<PeerId, PeerHashes> = new Map();
-  private publicHashesCache: PeerHashes | null = null;
-  private publicEventsCache: Map<Uint8Array, any> | null = null;
-  private pendingOpHashesCache: Uint8Array[] | null = null;
-  private lastKnownTotalOps: bigint = 0n;
+  private periodicCacheRefreshId?: ReturnType<typeof setInterval>;
 
-  // CGKA encryption: maps automerge DocumentId strings to keyhive DocumentIds
-  private docMap: Map<string, KeyhiveDocumentId> = new Map();
-  // Cache of fetched keyhive Document objects, keyed by automerge DocumentId
-  private docObjects: Map<string, KeyhiveDocument> = new Map();
-  // Tracks the last ChangeId used per document for pred_refs chaining
-  private lastChangeIdByDoc: Map<string, ChangeId> = new Map();
-  // Messages that failed decryption (key not yet available) — retried after keyhive sync
-  private pendingDecrypt: { message: Message; rawPayload: Uint8Array; automergeDocId: string; retries: number }[] = [];
-  // Maps peer IDs to their keyhive Identifier (from contact card exchange).
-  // keyhiveIdentifierFromPeerId derives Identifier from the signer's verifying key,
-  // but contactCard.id may differ (e.g. after archive reload). This map stores the
-  // authoritative Identifier from the actual contact card.
-  private peerContactCardIds: Map<string, Identifier> = new Map();
-
-  // Periodic op cache (only used when cacheHashes=true)
-  private opCache: OpCache | null = null;
-  private opCacheRefreshId?: ReturnType<typeof setInterval>;
-
-  private minSyncRequestInterval: number = 1000;
-  private minSyncResponseInterval: number = 1000;
+  private networkAdapter: NetworkAdapter;
+  private keyhive: Keyhive;
+  private keyhiveStorage: KeyhiveStorage;
+  private keyhiveQueue: PromiseQueue;
+  // TODO: Replace with dynamic configuration
+  private hardcodedRemoteId: PeerId | null;
 
   private batchInterval: number | undefined;
   private keyhiveMsgBatch: MessageBatch;
   private streamingMetrics = new Metrics();
   private metricsIntervalId?: ReturnType<typeof setInterval>;
-  // Persistent maps for immutable event data (only used when cacheHashes=false)
-  private eventBytes: Map<string, Uint8Array> = new Map();
-  private eventCborBytes: Map<string, Uint8Array> = new Map();
 
-  constructor(
-    private networkAdapter: NetworkAdapter,
-    private contactCard: ContactCard,
-    private keyhive: Keyhive,
-    private keyhiveStorage: KeyhiveStorage,
-    private keyhiveQueue: PromiseQueue,
-    periodicallyRequestSync: boolean,
-    cacheHashes: boolean = false,
-    // TODO: Replace with dynamic configuration
-    private hardcodedRemoteId: PeerId | null = null,
-    private syncRequestInterval: number,
-    batchInterval?: number,
-    private retryPendingFromStorage: boolean = true,
-    enableCompaction: boolean = true,
-  ) {
+  private syncProtocol: SyncProtocol;
+
+  // FORK: CGKA encryption — maps automerge DocumentId strings to keyhive DocumentIds
+  private docMap: Map<string, KeyhiveDocumentId> = new Map();
+  // FORK: CGKA encryption — cache of fetched keyhive Document objects
+  private docObjects: Map<string, KeyhiveDocument> = new Map();
+  // FORK: CGKA encryption — tracks the last ChangeId per document for pred_refs chaining
+  private lastChangeIdByDoc: Map<string, ChangeId> = new Map();
+  // FORK: CGKA encryption — messages that failed decryption, retried after keyhive sync
+  private pendingDecrypt: { message: Message; rawPayload: Uint8Array; automergeDocId: string; retries: number }[] = [];
+  // FORK: CGKA encryption — maps peer IDs to their keyhive Identifier from contact card exchange
+  private peerContactCardIds: Map<string, Identifier> = new Map();
+
+  private static readonly MAX_DECRYPT_RETRIES = 50;
+
+  constructor(options: KeyhiveNetworkAdapterOptions) {
     super();
-    this.cacheHashes = cacheHashes;
 
-    if (cacheHashes) {
-      this.opCache = new OpCache();
-      // Periodic refresh at the same interval as sync requests
-      this.opCacheRefreshId = setInterval(() => {
-        void this.keyhiveQueue.run(() => this.opCache!.refresh(this.keyhive));
+    const {
+      networkAdapter,
+      contactCard,
+      keyhive,
+      keyhiveStorage,
+      keyhiveQueue,
+      periodicallyRequestSync,
+      cachingMode = "none",
+      hardcodedRemoteId = null,
+      syncRequestInterval,
+      batchInterval,
+      retryPendingFromStorage = true,
+      enableCompaction = true,
+      archiveThreshold = 200,
+    } = options;
+
+    this.networkAdapter = networkAdapter;
+    this.keyhive = keyhive;
+    this.keyhiveStorage = keyhiveStorage;
+    this.keyhiveQueue = keyhiveQueue;
+    this.hardcodedRemoteId = hardcodedRemoteId;
+
+    let cache: EventCache;
+    if (cachingMode === "periodic") {
+      const periodicCache = new PeriodicEventCache();
+      cache = periodicCache;
+      this.periodicCacheRefreshId = setInterval(() => {
+        void this.keyhiveQueue.run(() => periodicCache.refresh(this.keyhive)).catch((error) =>
+          console.error("[AMRepoKeyhive] PeriodicEventCache refresh failed:", error)
+        );
       }, syncRequestInterval);
-      // Initial refresh
-      void this.keyhiveQueue.run(() => this.opCache!.refresh(this.keyhive));
+      void this.keyhiveQueue.run(() => periodicCache.refresh(this.keyhive)).catch((error) =>
+        console.error("[AMRepoKeyhive] Initial PeriodicEventCache refresh failed:", error)
+      );
+    } else if (cachingMode === "standard") {
+      cache = new StandardEventCache();
+    } else {
+      cache = new EventBytesOnlyEventCache();
     }
 
+    // FORK: CGKA encryption — wrap SyncProtocol's emit to trigger decrypt retry
+    // and store peerContactCardIds from contact card exchange
+    this.syncProtocol = new SyncProtocol(
+      {
+        keyhive,
+        keyhiveStorage,
+        keyhiveQueue,
+        peers: this.peers,
+        contactCard,
+        cache,
+        getPeerId: () => this.peerId,
+        getMetrics: () => this.streamingMetrics,
+        send: (message, contactCard?) => this.send(message, contactCard),
+        emit: (event) => {
+          (this.emit as any)(event);
+          // FORK: CGKA encryption — after ingesting remote ops, CGKA keys may
+          // now be available. Retry buffered messages.
+          if (event === "ingest-remote") {
+            this.retryPendingDecrypt();
+          }
+        },
+      },
+      {
+        archiveThreshold,
+        retryPendingFromStorage,
+        minSyncRequestInterval: 1000,
+        minSyncResponseInterval: 1000,
+      },
+    );
+
     if (periodicallyRequestSync) {
-        this.syncIntervalId = setInterval(this.requestKeyhiveSync.bind(this), syncRequestInterval);
+        this.syncIntervalId = setInterval(
+          () => this.syncProtocol.requestKeyhiveSync(),
+          syncRequestInterval,
+        );
     }
 
     if (enableCompaction) {
@@ -389,9 +180,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     });
 
     networkAdapter.on("peer-candidate", (payload) => {
-      if (this.peerId && payload.peerId == this.peerId) {
+      if (this.peerId && payload.peerId === this.peerId) {
+        console.warn(`[AMRepoKeyhive] Received peer-candidate msg with our own peerID`);
         return;
       }
+      console.debug(`[AMRepoKeyhive] peer-candidate: ${payload.peerId}`);
       this.emit("peer-candidate", payload);
       this.peers.set(payload.peerId, new Peer());
     });
@@ -399,9 +192,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     networkAdapter.on("peer-disconnected", (payload) => {
       this.emit("peer-disconnected", payload);
       this.peers.delete(payload.peerId);
-      if (!this.opCache) {
-        this.hashesCache.delete(payload.peerId);
-      }
+      this.syncProtocol.onPeerDisconnected(payload.peerId);
     });
 
     this.keyhiveMsgBatch = new MessageBatch();
@@ -411,7 +202,16 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.batchProcessor = new BatchProcessor(
         this.batchInterval!,
         this.keyhive,
-        this.handleKeyhiveMessage.bind(this),
+        async (message, data, metrics) => {
+          // FORK: CGKA encryption — store peerContactCardIds before delegating
+          if (data.contactCard) {
+            this.peerContactCardIds.set(message.senderId, data.contactCard.id);
+          }
+          const handled = await this.syncProtocol.handleKeyhiveMessage(message, data, metrics);
+          if (!handled) {
+            this.emit("message", message);
+          }
+        },
         () => {
           const old = this.keyhiveMsgBatch;
           this.keyhiveMsgBatch = new MessageBatch();
@@ -424,35 +224,27 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         const stats = await this.keyhive.stats();
         this.streamingMetrics.recordTotalOps(stats.totalOps);
         this.streamingMetrics.logReport("Streaming");
-        this.streamingMetrics.reset();
+        this.streamingMetrics = new Metrics();
       }, 1000);
     }
   }
 
+  // FORK: CGKA encryption — helper to get hex ID for debug logging
   private static _idHex(id: Identifier): string {
     try { return Array.from(id.toBytes() as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join(''); } catch { return '??'; }
   }
 
-  /** Get all known keyhive Identifiers for a peer (contact card + verifying key derived). */
+  // FORK: CGKA encryption — get all known keyhive Identifiers for a peer
   private identifiersForPeer(peerId: PeerId): Identifier[] {
     const fromPeerId = keyhiveIdentifierFromPeerId(peerId);
     const fromContactCard = this.peerContactCardIds.get(peerId);
     if (!fromContactCard) return [fromPeerId];
-    // Deduplicate if they happen to match
     if (fromContactCard.toBytes().toString() === fromPeerId.toBytes().toString()) return [fromPeerId];
     return [fromContactCard, fromPeerId];
   }
 
-  /** Try to find a keyhive agent for a peer, checking all known identifiers. */
-  private async getAgentForPeer(peerId: PeerId): Promise<any | null> {
-    for (const id of this.identifiersForPeer(peerId)) {
-      const agent = await this.keyhive.getAgent(id);
-      if (agent) return agent;
-    }
-    return null;
-  }
-
   connect(peerId: PeerId, peerMetadata?: PeerMetadata): void {
+    console.log(`[AMRepoKeyhive] connect: peerId=${peerId}`);
     this.peerId = peerId;
     this.peerMetadata = peerMetadata;
     this.networkAdapter.connect(peerId, peerMetadata);
@@ -483,52 +275,37 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       this.batchProcessor.stop();
       this.batchProcessor = undefined;
     }
+    if (this.periodicCacheRefreshId) {
+      clearInterval(this.periodicCacheRefreshId);
+      this.periodicCacheRefreshId = undefined;
+    }
     if (this.metricsIntervalId) {
       clearInterval(this.metricsIntervalId);
       this.metricsIntervalId = undefined;
     }
-    if (this.opCacheRefreshId) {
-      clearInterval(this.opCacheRefreshId);
-      this.opCacheRefreshId = undefined;
-    }
     this.networkAdapter.disconnect();
   }
 
-  /**
-   * Force automerge-repo to re-sync with all connected peers by cycling
-   * peer-disconnected → peer-candidate events. This resets automerge-repo's
-   * sync state for each peer, forcing fresh sync from scratch.
-   *
-   * A simple peer-candidate re-emit is insufficient because automerge-repo
-   * ignores peer-candidate for already-connected peers.
-   *
-   * Call after keyhive state changes (e.g., new member ingested, invite claim).
-   */
+  // FORK: CGKA encryption — force automerge-repo to re-sync with all connected
+  // peers by cycling peer-disconnected → peer-candidate events. Called after
+  // keyhive state changes (e.g., new member ingested, CGKA key rotation).
   forceResyncAllPeers(): void {
     this.docObjects.clear();
     for (const [peerId, peer] of this.peers) {
-      // Reset keyhiveSynced so outgoing sync messages are unencrypted until
-      // the next keyhive sync confirmation. This prevents the deadlock where
-      // A encrypts with a PCS key B doesn't have yet.
       peer.keyhiveSynced = false;
-      // Emit disconnect to tear down automerge-repo's sync state for this peer.
-      // We do NOT delete from this.peers — we keep our keyhive-level peer tracking.
       this.emit("peer-disconnected", { peerId });
       this.emit("peer-candidate", { peerId, peerMetadata: {} });
     }
   }
 
-  // Register a mapping from automerge DocumentId to keyhive DocumentId.
-  // Call this after enabling sharing on a document.
+  // FORK: CGKA encryption — register mapping from automerge DocumentId to keyhive DocumentId.
   registerDoc(automergeDocId: string, khDocId: KeyhiveDocumentId): void {
     this.docMap.set(automergeDocId, khDocId);
-    // Eagerly prime the Document object cache so the first encrypt doesn't stall
     void this.getOrFetchDocument(automergeDocId);
-    // Retry any buffered messages that were encrypted for this doc before the mapping existed
     this.retryPendingDecrypt();
   }
 
-  /** Fetch (and cache) the keyhive Document for a given automerge doc ID. */
+  // FORK: CGKA encryption — fetch (and cache) the keyhive Document for a given automerge doc ID.
   private async getOrFetchDocument(automergeDocId: string): Promise<KeyhiveDocument | null> {
     const cached = this.docObjects.get(automergeDocId);
     if (cached) return cached;
@@ -539,61 +316,17 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     return doc ?? null;
   }
 
-  /** Encrypt `data` bytes for a registered document. Returns flagged ciphertext or null on failure. */
-  private async encryptPayload(automergeDocId: string, data: Uint8Array): Promise<Uint8Array | null> {
-    const doc = await this.getOrFetchDocument(automergeDocId);
-    if (!doc) return null;
-    try {
-      const hashBuf = await crypto.subtle.digest('SHA-256', data as unknown as BufferSource);
-      const contentRef = new ChangeId(new Uint8Array(hashBuf));
-      const predRef = this.lastChangeIdByDoc.get(automergeDocId);
-      // Delete before tryEncrypt: see inline encrypt block comment for rationale.
-      this.docObjects.delete(automergeDocId);
-      this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
-      const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
-      if (result.update_op()) {
-        // CGKA key rotation — force a full sync so the new op reaches all peers
-        this.invalidateCaches();
-        for (const peer of this.peers.values()) peer.forceFullSync = true;
-        setTimeout(() => this.syncKeyhive(), 0);
-      }
-      const encBytes = result.encrypted_content().toBytes();
-      const out = new Uint8Array(1 + encBytes.length);
-      out[0] = ENC_ENCRYPTED;
-      out.set(encBytes, 1);
-      return out;
-    } catch (e) {
-      console.error(`[AMRepoKeyhive] encryptPayload failed for doc ${automergeDocId}:`, e);
-      return null;
-    }
-  }
-
-  /** Decrypt a flagged payload. Returns plaintext bytes or null on failure. */
-  private async decryptPayload(automergeDocId: string, flaggedData: Uint8Array): Promise<Uint8Array | null> {
-    if (flaggedData.length === 0) return flaggedData;
-    if (flaggedData[0] !== ENC_ENCRYPTED) return null;
-    const doc = await this.getOrFetchDocument(automergeDocId);
-    if (!doc) {
-      console.error(`[AMRepoKeyhive] decryptPayload: no keyhive doc for ${automergeDocId}`);
-      return null;
-    }
-    try {
-      const encrypted = (Encrypted as any).fromBytes(flaggedData.slice(1));
-      return await this.keyhive.tryDecrypt(doc, encrypted);
-    } catch (e) {
-      console.error(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}:`, e);
-      return null;
-    }
-  }
-
   send(message: Message, contactCard?: ContactCard): void {
     if (this.peerId === undefined) {
       throw new Error("peerId must be defined!");
     }
-    void this.asyncSignAndSend(message, contactCard);
+    void this.signAndSend(message, contactCard).catch((error) =>
+      console.error(`[AMRepoKeyhive] Failed to sign and send (type=${message.type}):`, error)
+    );
   }
 
-  async asyncSignAndSend(
+  // FORK: CGKA encryption — signAndSend is extended to encrypt doc payloads
+  async signAndSend(
     message: Message,
     contactCard?: ContactCard
   ): Promise<void> {
@@ -606,7 +339,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         : new Uint8Array();
     const seqNumber = this.pending.register();
     try {
-      // Pre-compute SHA-256 hash outside WASM (native crypto API, safe to call concurrently)
+      // FORK: CGKA encryption — determine if this message should be encrypted
       const automergeDocId = (message as any).documentId as string | undefined;
       const targetId = (message as any).targetId as PeerId | undefined;
       const isDocMessage =
@@ -614,10 +347,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         this.docMap.has(automergeDocId) &&
         (message.type === "sync" || message.type === "change") &&
         data.length > 0;
-      // If this is a doc message targeted at a peer that hasn't completed
-      // keyhive sync, drop it. The peer doesn't have CGKA keys yet and we
-      // must not send doc content unencrypted. After keyhive sync completes
-      // and keyhiveSynced becomes true, automerge-repo will re-sync.
+
+      // FORK: CGKA encryption — drop doc messages for peers that haven't completed
+      // keyhive sync (they lack CGKA keys). automerge-repo will re-sync after
+      // keyhiveSynced becomes true.
       if (isDocMessage && targetId) {
         const peer = this.peers.get(targetId);
         if (peer && !peer.keyhiveSynced) {
@@ -625,14 +358,15 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           return;
         }
       }
+
       const shouldEncrypt = isDocMessage;
-      if (automergeDocId && (message.type === "sync" || message.type === "change")) {
-      }
       let hashBuf: ArrayBuffer | undefined;
       if (shouldEncrypt) {
         hashBuf = await crypto.subtle.digest('SHA-256', data as unknown as BufferSource);
       }
-      // Encrypt (if applicable) and sign in a single queue slot to prevent concurrent WASM access
+
+      // FORK: CGKA encryption — encrypt (if applicable) and sign in a single
+      // queue slot to prevent concurrent WASM access
       const signedData = await this.keyhiveQueue.run(async () => {
         let payload = data;
         if (shouldEncrypt && hashBuf && automergeDocId) {
@@ -655,7 +389,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
               this.lastChangeIdByDoc.set(automergeDocId, new ChangeId(new Uint8Array(hashBuf)));
               const result = await this.keyhive.tryEncrypt(doc, contentRef, predRef ? [predRef] : [], data);
               if (result.update_op()) {
-                // New CGKA op generated — force a full sync so the new op reaches all peers
+                // CGKA key rotation — force a full sync so the new op reaches all peers
                 this.invalidateCaches();
                 for (const peer of this.peers.values()) peer.forceFullSync = true;
                 setTimeout(() => this.syncKeyhive(), 0);
@@ -675,9 +409,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       });
       await this.networkAdapter.whenReady();
       this.pending.fire(seqNumber, () => {
-        // Ensure senderId matches the signing key. Automerge-repo preserves the
-        // original senderId when forwarding ephemeral messages between adapters,
-        // but the keyhive adapter signs with its own key — so senderId must match.
+        // FORK: CGKA encryption — ensure senderId matches the signing key
         message.senderId = this.peerId!;
         message.data = signedData;
         this.networkAdapter.send(message);
@@ -691,15 +423,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     }
   }
 
-  // Check if a peer has write access to a document via the keyhive access graph.
-  // Returns true if: no keyhive doc registered (unshared), or peer has admin/write access.
-  // Returns false if peer has read/pull/no access.
+  // FORK: CGKA encryption — check if a peer has write access to a document
   private async peerHasWriteAccess(senderId: PeerId, automergeDocId: string): Promise<boolean> {
     const khDocId = this.docMap.get(automergeDocId);
-    if (!khDocId) {
-      // No keyhive doc registered — unshared doc, allow all
-      return true;
-    }
+    if (!khDocId) return true; // unshared doc
     try {
       const senderIdentifiers = this.identifiersForPeer(senderId);
       let access: any = undefined;
@@ -708,7 +435,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
         if (access) break;
       }
       if (!access) {
-        // Dump members for debugging
         try {
           const members = await this.keyhive.docMemberCapabilities(khDocId);
           const idHexes = senderIdentifiers.map(id => KeyhiveNetworkAdapter._idHex(id)).join(', ');
@@ -731,12 +457,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
       return canWrite;
     } catch (err) {
       console.warn(`[AMRepoKeyhive] Access check failed for peer ${senderId} on doc ${automergeDocId}:`, err);
-      // On error, block by default for safety
       return false;
     }
   }
 
-  // Async wrapper that checks write access before emitting a sync message
+  // FORK: CGKA encryption — async wrapper that checks write access before emitting
   private async checkAccessAndEmit(message: Message): Promise<void> {
     const docId = (message as any).documentId as string;
     const hasAccess = await this.keyhiveQueue.run(() =>
@@ -749,26 +474,30 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     }
   }
 
+  // FORK: CGKA encryption — receiveMessage is extended to decrypt doc payloads
   receiveMessage(message: Message): void {
     try {
       if (
         this.hardcodedRemoteId &&
         message.senderId !== this.hardcodedRemoteId
       ) {
+        console.debug(
+          `[AMRepoKeyhive] Unknown remote peer ${message.senderId}. Ignoring message!`
+        );
         return;
       }
       if (!("data" in message) || message.data === undefined) {
         this.emit("message", message);
         return;
       }
-      // Messages from non-keyhive peers (e.g. relay server) aren't signed — pass through
+      // FORK: CGKA encryption — non-keyhive peers (e.g. relay server) aren't signed
       if (!isKeyhivePeerId(message.senderId)) {
         this.emit("message", message);
         return;
       }
       const maybeKeyhiveMessageData = decodeKeyhiveMessageData(message.data);
       if (maybeKeyhiveMessageData) {
-        // Verify inside the queue to prevent concurrent WASM access (verify() is a WASM call)
+        // FORK: CGKA encryption — verify inside the queue to prevent concurrent WASM access
         void this.keyhiveQueue.run(async () => {
           if (verifyData(message.senderId, maybeKeyhiveMessageData)) {
             if (!message.type?.startsWith("keyhive-")) {
@@ -778,28 +507,21 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                 this.streamingMetrics.recordNonKeyhive();
               }
               const rawPayload = maybeKeyhiveMessageData.signed.payload;
-              // Check write access before emitting sync messages to the repo.
-              // With a relay server, senderId is the original peer (not the server),
-              // so we can verify the sender has write permission for this document.
+              // FORK: CGKA encryption — decrypt encrypted doc payloads
               const automergeDocId = (message as any).documentId as string | undefined;
               const isEncrypted = rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_ENCRYPTED;
               const inDocMap = automergeDocId ? this.docMap.has(automergeDocId) : false;
               if (automergeDocId && inDocMap &&
                   (message.type === "sync" || message.type === "change") &&
                   isEncrypted) {
-                // Decrypt inside the queue to prevent concurrent WASM access
                 void this.keyhiveQueue.run(async () => {
                   try {
                     let doc = this.docObjects.get(automergeDocId);
                     if (!doc) {
-                      // Cache miss — fetch now (inside queue to avoid concurrent WASM access)
                       const khDocId = this.docMap.get(automergeDocId);
                       if (khDocId) {
                         const fetched = await this.keyhive.getDocument(khDocId);
-                        if (fetched) {
-                          this.docObjects.set(automergeDocId, fetched);
-                          doc = fetched;
-                        }
+                        if (fetched) { this.docObjects.set(automergeDocId, fetched); doc = fetched; }
                       }
                     }
                     if (!doc) {
@@ -820,7 +542,6 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                         this.emit("message", message);
                       }
                     } catch (e: any) {
-                      // Decryption failed (key not yet available) — buffer for retry after keyhive sync
                       const errDetail = typeof e?.message === 'function' ? e.message() : (e?.message ?? String(e));
                       console.warn(`[AMRepoKeyhive] decryptPayload failed for doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending): ${errDetail}`);
                       this.pendingDecrypt.push({ message, rawPayload, automergeDocId, retries: 0 });
@@ -830,8 +551,7 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                   }
                 });
               } else if (rawPayload && rawPayload.length > 0 && rawPayload[0] === ENC_ENCRYPTED) {
-                // Encrypted payload but doc mapping not yet registered (timing race).
-                // Buffer for retry — do NOT pass encrypted bytes to automerge.
+                // FORK: CGKA encryption — encrypted payload but doc not yet registered
                 if (automergeDocId) {
                   console.warn(`[AMRepoKeyhive] encrypted msg for unmapped doc ${automergeDocId}, buffering for retry (${this.pendingDecrypt.length + 1} pending)`);
                   this.pendingDecrypt.push({ message, rawPayload, automergeDocId, retries: 0 });
@@ -839,25 +559,37 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
                   console.error(`[AMRepoKeyhive] encrypted msg with no documentId, dropping`);
                 }
               } else {
-                // Genuinely unencrypted payload (e.g. from server relay).
+                // Genuinely unencrypted payload (e.g. from server relay)
                 message.data = rawPayload;
                 this.emit("message", message);
               }
             } else if (this.isBatching()) {
+              // FORK: CGKA encryption — store peerContactCardIds before batching
+              if (maybeKeyhiveMessageData.contactCard) {
+                this.peerContactCardIds.set(message.senderId, maybeKeyhiveMessageData.contactCard.id);
+              }
               this.keyhiveMsgBatch.add(message, maybeKeyhiveMessageData);
             } else {
               this.streamingMetrics.recordMessage(
                 message.type, message.senderId,
                 maybeKeyhiveMessageData.signed.payload?.byteLength ?? 0,
               );
+              // FORK: CGKA encryption — store peerContactCardIds before handling
+              if (maybeKeyhiveMessageData.contactCard) {
+                this.peerContactCardIds.set(message.senderId, maybeKeyhiveMessageData.contactCard.id);
+              }
               const startTime = Date.now();
               const msgType = message.type ?? "unknown";
-              void this.handleKeyhiveMessage(message, maybeKeyhiveMessageData, this.streamingMetrics).then(() => {
-                this.streamingMetrics.recordProcessingTime(Date.now() - startTime);
-                this.streamingMetrics.recordProcessingTimeByType(msgType, Date.now() - startTime);
-              }).catch((err) => {
-                console.error(`[AMRepoKeyhive] handleKeyhiveMessage error for ${msgType}:`, err);
-              });
+              void this.syncProtocol.handleKeyhiveMessage(message, maybeKeyhiveMessageData, this.streamingMetrics).then((handled) => {
+                const elapsed = Date.now() - startTime;
+                this.streamingMetrics.recordProcessingTime(elapsed);
+                this.streamingMetrics.recordProcessingTimeByType(msgType, elapsed);
+                if (!handled) {
+                  this.emit("message", message);
+                }
+              }).catch((error) =>
+                console.error(`[AMRepoKeyhive] Error handling message (type=${message.type}, from=${message.senderId}):`, error)
+              );
             }
           } else {
             console.error(
@@ -866,9 +598,8 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           }
         });
       } else {
-        // Peer has a keyhive-looking ID but its message isn't keyhive-signed
-        // (e.g. relay server whose peerId prefix happens to decode as 32 bytes).
-        // Treat the same as a non-keyhive peer — pass through as-is.
+        // FORK: CGKA encryption — peer has keyhive-looking ID but message isn't signed
+        // (e.g. relay server). Pass through as-is.
         this.emit("message", message);
       }
     } catch (e) {
@@ -877,792 +608,22 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     }
   }
 
-  private async handleKeyhiveMessage(
-    message: Message,
-    keyhiveMessageData: KeyhiveMessageData,
-    metrics: Metrics,
-  ) {
-    if (keyhiveMessageData.contactCard) {
-      try {
-        await receiveContactCard(
-          this.keyhive,
-          keyhiveMessageData.contactCard,
-          this.keyhiveStorage
-        );
-        // Store the authoritative mapping: peer ID → contact card Identifier.
-        // keyhiveIdentifierFromPeerId (derived from signer.verifyingKey) may not
-        // match contactCard.id after archive reload.
-        this.peerContactCardIds.set(message.senderId, keyhiveMessageData.contactCard.id);
-      } catch (err) {
-        console.error("[AMRepoKeyhive] receiveContactCard failed:", err);
-      }
-    }
-    message.data = keyhiveMessageData.signed.payload;
-    console.log(`[AMRepoKeyhive] handleKeyhiveMessage: type=${message.type} from=${message.senderId}`);
-
-    if (message.type === "keyhive-sync-request") {
-      await this.sendKeyhiveSyncResponse(message, metrics);
-    } else if (message.type === "keyhive-sync-response") {
-      await this.sendKeyhiveSyncOps(message, metrics);
-    } else if (message.type === "keyhive-sync-request-contact-card") {
-      await this.sendKeyhiveSyncMissingContactCard(message);
-    } else if (message.type === "keyhive-sync-missing-contact-card") {
-      // Pass undefined so the sync loop doesn't skip the peer who just sent
-      // their contact card — that's the peer we need to sync WITH.
-      await this.syncKeyhive(undefined, true);
-    } else if (message.type === "keyhive-sync-ops") {
-      await this.receiveKeyhiveSyncOps(message, metrics);
-    } else if (message.type === "keyhive-sync-check") {
-      await this.handleKeyhiveSyncCheck(message, metrics);
-    } else if (message.type === "keyhive-sync-confirmation") {
-      await this.handleKeyhiveSyncConfirmation(message, metrics);
-    } else {
-      this.emit("message", message);
-    }
-  }
-
   syncKeyhive(
     maybeSenderId: PeerId | undefined = undefined,
     includeContactCard: boolean = false,
     attemptRecovery: boolean = false
   ): void {
-    void this.asyncSyncKeyhive(
-      maybeSenderId,
-      includeContactCard,
-      attemptRecovery
-    );
+    this.syncProtocol.syncKeyhive(maybeSenderId, includeContactCard, attemptRecovery);
   }
 
-  // Trigger the keyhive op set reconciliation sync protocol. Determine the hashes
-  // that are relevant for the given peer as well as any pending hashes on this
-  // keyhive (any pending hash might be relevant). Then send a request to the
-  // peer to begin the sync protocol.
-  // This is the first keyhive op sync protocol message.
-  private async asyncSyncKeyhive(
-    maybeSenderId: PeerId | undefined,
-    includeContactCard: boolean,
-    attemptRecovery: boolean = false
-  ): Promise<void> {
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-    await this.keyhiveQueue.run(async () => {
-      if (attemptRecovery) {
-        try {
-          const statsBefore = await this.keyhive.stats();
-          await this.keyhiveStorage.ingestKeyhiveFromStorage(this.keyhive);
-          // Check if ingestion changed state and invalidate cache if needed
-          await this.checkAndInvalidateCache();
-          // Emit ingest-remote if new ops were added from storage
-          const statsAfter = await this.keyhive.stats();
-          if (statsAfter.totalOps !== statsBefore.totalOps) {
-            (this.emit as any)("ingest-remote");
-            this.retryPendingDecrypt();
-          }
-        } catch (error) {
-          console.error(`[AMRepoKeyhive] Unable to ingest from storage: ${error}`);
-        }
-      }
-      let senderId: PeerId;
-      if (maybeSenderId) {
-        senderId = maybeSenderId;
-      } else {
-        senderId = this.peerId!;
-      }
-
-      // Get contact card once for all peers if needed, to avoid multiple rotations
-      let maybeContactCard: ContactCard | undefined;
-      if (includeContactCard) {
-        maybeContactCard = this.contactCard;
-      }
-
-      for (const targetId of this.peers.keys()) {
-        if (targetId == senderId || targetId == this.peerId!) {
-          continue;
-        }
-        if (!isKeyhivePeerId(targetId)) {
-          continue; // Skip non-keyhive peers (e.g. relay server)
-        }
-        if (!this.readyToSendKeyhiveRequest(targetId)) {
-          continue;
-        }
-
-        // Check if we know the target agent (WASM keyhive is authoritative)
-        const targetAgent = await this.getAgentForPeer(targetId);
-        if (!targetAgent) {
-          if (!maybeContactCard) {
-            maybeContactCard = this.contactCard;
-          }
-          const message = {
-            type: "keyhive-sync-request-contact-card",
-            senderId: senderId,
-            targetId: targetId,
-          };
-          this.send(message, maybeContactCard);
-        } else {
-          const peer = this.peers.get(targetId);
-          if (peer?.beliefCounts !== null && peer !== undefined && !peer.forceFullSync) {
-            // Shortcut: send lightweight sync check instead of full request
-            const hashes = await this.getHashesForPeerPair(senderId, targetId);
-            const pendingOpHashes = await this.getCachedPendingOpHashes();
-            const myTotal = hashes.size + pendingOpHashes.length;
-            const data = encode({
-              myTotal,
-              beliefOfTheirTotal: peer.beliefCounts.theirTotalForMe,
-            });
-            const message = {
-              type: "keyhive-sync-check",
-              senderId: senderId,
-              targetId: targetId,
-              data: data,
-            };
-            // BUG1 DIAGNOSTIC: check for staleness on every sync check (bypasses all caches)
-            {
-              const pubAgent = await this.keyhive.getAgent(Identifier.publicId());
-              if (pubAgent) {
-                const rawHashes = await this.keyhive.eventHashesForAgent(pubAgent);
-                const rawEvents = await this.keyhive.eventsForAgent(pubAgent);
-                const stats = await this.keyhive.stats();
-                if (rawHashes.length !== rawEvents.size) {
-                  console.error(`[BUG1] STALE at sync-check! eventHashesForAgent=${rawHashes.length} eventsForAgent=${rawEvents.size} totalOps=${stats.totalOps} myTotal=${myTotal}`);
-                }
-              }
-            }
-            this.streamingMetrics.recordSyncCheckSent();
-            this.send(message, maybeContactCard);
-          } else {
-            // No belief yet (or forceFullSync) — send full sync request
-            if (peer) peer.forceFullSync = false;
-            const hashes = await this.getHashesForPeerPair(senderId, targetId);
-            const opHashes = Array.from(hashes.values());
-            const pendingOpHashes = await this.getCachedPendingOpHashes();
-            const data = encode({
-              found: opHashes,
-              pending: pendingOpHashes,
-            });
-            const message = {
-              type: "keyhive-sync-request",
-              senderId: senderId,
-              targetId: targetId,
-              data: data,
-            };
-            console.log(
-              `[AMRepoKeyhive] Sending FULL keyhive sync request to ${targetId} with ${opHashes.length} hashes and ${pendingOpHashes.length} pending`
-            );
-            this.send(message, maybeContactCard);
-          }
-        }
-        const peer = this.peers.get(targetId);
-        if (peer) {
-          peer.lastKeyhiveRequestSent = new Date();
-        }
-      }
-    });
+  invalidateCaches(): void {
+    this.syncProtocol.invalidateCaches();
   }
 
-  // Send a response to a request from a peer to initiate the keyhive op set
-  // reconciliation sync protocol. Given the hashes sent by the peer, determine
-  // which ops to send them. Then determine any missing ops to request from the
-  // peer.
-  // This is the second keyhive op sync protocol message.
-  private async sendKeyhiveSyncResponse(message: Message, metrics: Metrics): Promise<void> {
-    if (!("data" in message) || !message.data) {
-      console.error("[AMRepoKeyhive] Expected data in keyhive-sync-request");
-      return;
-    }
-    if (message.type !== "keyhive-sync-request") {
-      console.error(
-        `[AMRepoKeyhive] Expected keyhive-sync-request, but got ${message.type}`
-      );
-      return;
-    }
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-    const peerId = this.peerId;
-
-    const requestData = decode(message.data as Uint8Array);
-    const peerFoundHashes: Uint8Array[] = requestData.found || [];
-    const peerPendingHashes: Uint8Array[] = requestData.pending || [];
-
-
-    const queueEnterTime = Date.now();
-    await this.keyhiveQueue.run(async () => {
-      metrics.recordQueueWait(Date.now() - queueEnterTime);
-      if (!this.readyToSendKeyhiveResponse(message.senderId)) {
-        return;
-      }
-
-      // Check if we know the sender agent (WASM keyhive is authoritative)
-      const senderAgent = await this.getAgentForPeer(message.senderId);
-      if (!senderAgent) {
-        const response = {
-          type: "keyhive-sync-request-contact-card",
-          senderId: peerId,
-          targetId: message.senderId,
-        };
-        this.send(response, this.contactCard);
-      } else {
-        // Agent is known — use cache for hashes (may be empty if cache hasn't caught up)
-        const localHashes = await this.getHashesForPeerPair(peerId, message.senderId, metrics);
-        const pendingOpHashes = await this.getCachedPendingOpHashes(metrics);
-
-        // Build map to look up peer found hashes by string
-        const peerFoundByHashString = new Map<string, Uint8Array>();
-        for (const hash of peerFoundHashes) {
-          peerFoundByHashString.set(hash.toString(), hash);
-        }
-
-        const pendingHashStrings = new Set(
-          pendingOpHashes.map((h) => h.toString())
-        );
-        // Merge peer pending into found for "to send" computation — the peer
-        // already has bytes for pending events, so don't re-send them.
-        // But don't request pending events — peers can't serve them.
-        const peerPendingHashStrings = new Set(
-          peerPendingHashes.map((h) => h.toString())
-        );
-        const localHashStrings = new Set(localHashes.keys());
-        const peerFoundHashStrings = new Set(peerFoundByHashString.keys());
-
-        // Determine which ops we need to send to the peer
-        const hashStringsToSend = localHashStrings.difference(
-          peerFoundHashStrings.union(peerPendingHashStrings)
-        );
-
-        // Determine which ops we need to request from the peer (only from found, not pending)
-        const hashStringsToRequest = peerFoundHashStrings.difference(
-          localHashStrings.union(pendingHashStrings)
-        );
-        const requested = Array.from(hashStringsToRequest)
-          .map((str) => peerFoundByHashString.get(str))
-          .filter((hash) => hash !== undefined);
-
-        // Only fetch full events if we have ops to send
-        let foundResult: EventBytesResult = { events: [], cborEvents: [] };
-        if (hashStringsToSend.size > 0) {
-          foundResult = await this.getEventBytesForHashes(peerId, hashStringsToSend, metrics);
-        }
-
-        metrics.recordOpsSent(foundResult.events.length);
-        metrics.recordOpsRequested(requested.length);
-
-
-        // Metadata for belief tracking
-        const senderTotal = localHashes.size + pendingOpHashes.length;
-        const receiverTotal = peerFoundHashes.length + peerPendingHashes.length;
-        const data = buildSyncResponseCbor(requested, foundResult.cborEvents, senderTotal, receiverTotal);
-        const response = {
-          type: "keyhive-sync-response",
-          senderId: peerId,
-          targetId: message.senderId,
-          data,
-        };
-        this.send(response);
-      }
-      const peer = this.peers.get(message.senderId);
-      if (peer) {
-        peer.lastKeyhiveRequestRcvd = new Date();
-      }
-    });
-  }
-
-  // Send requested ops in response to a keyhive sync response. Look up ops
-  // for the requested hashes and send them to the requesting peer.
-  // This is the third (and final) keyhive op sync protocol message.
-  private async sendKeyhiveSyncOps(message: Message, metrics: Metrics): Promise<void> {
-    if (!("data" in message) || !message.data) {
-      console.error("[AMRepoKeyhive] Expected data in keyhive-sync-response");
-      return;
-    }
-    if (message.type !== "keyhive-sync-response") {
-      console.error(
-        `[AMRepoKeyhive] Expected keyhive-sync-response, but got ${message.type}`
-      );
-      return;
-    }
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-    const peerId = this.peerId;
-
-    const responseData = decode(message.data as Uint8Array);
-    const requestedHashes: Uint8Array[] = responseData.requested || [];
-    const foundEvents: Uint8Array[] = responseData.found || [];
-    const responseSenderTotal: number | undefined = responseData.senderTotal;
-    const responseReceiverTotal: number | undefined = responseData.receiverTotal;
-
-
-    const queueEnterTime = Date.now();
-    await this.keyhiveQueue.run(async () => {
-      metrics.recordQueueWait(Date.now() - queueEnterTime);
-      if (foundEvents.length > 0) {
-
-        try {
-          let pendingEvents: any[] | null = null;
-          try {
-            pendingEvents = await this.keyhive.ingestEventsBytes(foundEvents);
-          } catch (error) {
-            console.error(`[AMRepoKeyhive] Error ingesting events: ${error}`);
-          }
-
-          if (pendingEvents) {
-            metrics.recordIngestion(foundEvents.length, pendingEvents.length);
-            console.log(
-              `[AMRepoKeyhive] Ingested ${foundEvents.length} events from ${message.senderId}, ${pendingEvents.length} pending`
-            );
-          }
-
-          // If there are pending events or something went wrong ingesting, try reading from
-          // storage (e.g., in case they have already been processed by a separate tab in a
-          // browser).
-          if (!pendingEvents || pendingEvents.length > 0) {
-            if (pendingEvents) {
-            }
-            if (this.retryPendingFromStorage) {
-              metrics.recordStorageRetry();
-              try {
-                await this.keyhiveStorage.ingestKeyhiveFromStorage(this.keyhive);
-                const retryPending =
-                  await this.keyhive.ingestEventsBytes(foundEvents);
-                if (retryPending.length === 0) {
-                } else {
-                }
-              } catch (storageError) {
-                console.error(
-                  `[AMRepoKeyhive] Failed while reading from storage:`,
-                  storageError
-                );
-              }
-            }
-          }
-
-          void this.saveReceivedEvents(foundEvents);
-          // Invalidate/refresh cache since we ingested events from a peer
-          if (this.opCache) {
-            void this.opCache.refresh(this.keyhive);
-          } else {
-            this.invalidateCaches();
-          }
-          const statsAfterIngest = await this.keyhive.stats();
-          // BUG1 DIAGNOSTIC: check eventHashesForAgent consistency after ingestion
-          {
-            const pubAgent = await this.keyhive.getAgent(Identifier.publicId());
-            if (pubAgent) {
-              const hashes = await this.keyhive.eventHashesForAgent(pubAgent);
-              const events = await this.keyhive.eventsForAgent(pubAgent);
-              if (hashes.length !== events.size) {
-                console.error(`[BUG1] STALE after sync-response ingest! eventHashesForAgent=${hashes.length} but eventsForAgent=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
-              } else {
-              }
-            }
-          }
-          if (statsAfterIngest.totalOps !== this.lastKnownTotalOps) {
-            this.lastKnownTotalOps = statsAfterIngest.totalOps;
-            // Only clear beliefs when state actually changed
-            this.invalidateBeliefs();
-            (this.emit as any)("ingest-remote");
-            this.retryPendingDecrypt();
-          } else {
-            // Even if no new ops, retry pending decrypts — CGKA key state may have changed
-            this.retryPendingDecrypt();
-          }
-        } catch (error) {
-          await this.handleIngestError(error, foundEvents, message.senderId);
-        }
-      }
-
-      if (requestedHashes.length > 0) {
-        const requestedHashStrings = new Set(
-          requestedHashes.map((h) => h.toString())
-        );
-        const requestedResult = await this.getEventBytesForHashes(peerId, requestedHashStrings, metrics);
-
-        if (requestedResult.events.length === 0) {
-          // Fall through to confirmation below
-        } else {
-          if (requestedResult.events.length < requestedHashes.length) {
-          }
-
-          metrics.recordOpsSent(requestedResult.events.length);
-
-
-          if (responseSenderTotal !== undefined && responseReceiverTotal !== undefined) {
-            const data = buildSyncOpsCbor(requestedResult.cborEvents, responseSenderTotal, responseReceiverTotal);
-            const response = {
-              type: "keyhive-sync-ops",
-              senderId: peerId,
-              targetId: message.senderId,
-              data,
-            };
-            this.send(response);
-          } else {
-            const data = buildCborByteStringArray(requestedResult.cborEvents);
-            const response = {
-              type: "keyhive-sync-ops",
-              senderId: peerId,
-              targetId: message.senderId,
-              data,
-            };
-            this.send(response);
-          }
-          return;
-        }
-      }
-
-      // No ops exchanged (or 0 found for requested) — send confirmation and establish beliefs
-      if (responseSenderTotal !== undefined && responseReceiverTotal !== undefined) {
-        const peer = this.peers.get(message.senderId);
-        if (peer) {
-          // receiverTotal is what the responder computed as our total for them
-          peer.beliefCounts = {
-            myTotalForThem: responseReceiverTotal,
-            theirTotalForMe: responseSenderTotal,
-          };
-        }
-
-        const confirmData = encode({
-          myTotalForThem: responseReceiverTotal,
-          theirTotalForMe: responseSenderTotal,
-        });
-        const confirmMsg = {
-          type: "keyhive-sync-confirmation",
-          senderId: peerId,
-          targetId: message.senderId,
-          data: confirmData,
-        };
-        metrics.recordSyncConfirmationSent();
-        this.send(confirmMsg);
-      }
-    });
-  }
-
-  // In response to a message from a peer indicating they are missing our contact
-  // card, send it along. This response will trigger a keyhive op sync.
-  private async sendKeyhiveSyncMissingContactCard(
-    message: Message
-  ): Promise<void> {
-    if (message.type !== "keyhive-sync-request-contact-card") {
-      console.error(
-        `[AMRepoKeyhive] Expected keyhive-sync-request-contact-card, but got ${message.type}`
-      );
-      return;
-    }
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-
-
-    const response = {
-      type: "keyhive-sync-missing-contact-card",
-      senderId: this.peerId,
-      targetId: message.senderId,
-    };
-    this.send(response, this.contactCard);
-  }
-
-  // Receive ops sent by a peer as part of the third (and final) keyhive ops
-  // sync protocol message.
-  private async receiveKeyhiveSyncOps(message: Message, metrics: Metrics): Promise<void> {
-    if (!("data" in message) || !message.data) {
-      console.error("[AMRepoKeyhive] Expected data in keyhive-sync-ops");
-      return;
-    }
-    if (message.type !== "keyhive-sync-ops") {
-      console.error(
-        `[AMRepoKeyhive] Expected keyhive-sync-ops, but got ${message.type}`
-      );
-      return;
-    }
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-
-    const decoded = decode(message.data as Uint8Array);
-
-    // Handle both old array format and new map format with metadata
-    let receivedEvents: Uint8Array[];
-    let opsSenderTotal: number | undefined;
-    let opsReceiverTotal: number | undefined;
-    if (Array.isArray(decoded)) {
-      receivedEvents = decoded;
-    } else {
-      receivedEvents = decoded.ops || [];
-      opsSenderTotal = decoded.senderTotal;
-      opsReceiverTotal = decoded.receiverTotal;
-    }
-
-
-    const queueEnterTime = Date.now();
-    await this.keyhiveQueue.run(async () => {
-      metrics.recordQueueWait(Date.now() - queueEnterTime);
-      if (receivedEvents.length > 0) {
-
-        try {
-          const pendingEvents =
-            await this.keyhive.ingestEventsBytes(receivedEvents);
-          metrics.recordIngestion(receivedEvents.length, pendingEvents.length);
-
-          // If there are pending events, try reading from storage (e.g., in case
-          // they have already been processed by a separate tab in a browser).
-          if (pendingEvents.length > 0) {
-            if (this.retryPendingFromStorage) {
-              metrics.recordStorageRetry();
-              try {
-                await this.keyhiveStorage.ingestKeyhiveFromStorage(this.keyhive);
-                const retryPending =
-                  await this.keyhive.ingestEventsBytes(receivedEvents);
-                if (retryPending.length === 0) {
-                } else {
-                }
-              } catch (storageError) {
-                console.error(
-                  `[AMRepoKeyhive] Failed while reading from storage:`,
-                  storageError
-                );
-              }
-            }
-          }
-
-          void this.saveReceivedEvents(receivedEvents);
-          // Invalidate hash cache since we ingested events from a peer
-          this.invalidateCaches();
-          const statsAfterIngest = await this.keyhive.stats();
-          // BUG1 DIAGNOSTIC: check eventHashesForAgent consistency after ingestion
-          {
-            const pubAgent = await this.keyhive.getAgent(Identifier.publicId());
-            if (pubAgent) {
-              const hashes = await this.keyhive.eventHashesForAgent(pubAgent);
-              const events = await this.keyhive.eventsForAgent(pubAgent);
-              if (hashes.length !== events.size) {
-                console.error(`[BUG1] STALE after sync-ops ingest! eventHashesForAgent=${hashes.length} but eventsForAgent=${events.size}, totalOps=${statsAfterIngest.totalOps}`);
-              } else {
-              }
-            }
-          }
-          if (statsAfterIngest.totalOps !== this.lastKnownTotalOps) {
-            this.lastKnownTotalOps = statsAfterIngest.totalOps;
-            // Only clear beliefs when state actually changed
-            this.invalidateBeliefs();
-            (this.emit as any)("ingest-remote");
-            this.retryPendingDecrypt();
-          } else {
-            // Even if no new ops, retry pending decrypts — CGKA key state may have changed
-            this.retryPendingDecrypt();
-          }
-
-          // After successful ingestion, send confirmation and establish beliefs
-          if (opsSenderTotal !== undefined && opsReceiverTotal !== undefined) {
-            const peer = this.peers.get(message.senderId);
-            if (peer) {
-              peer.beliefCounts = {
-                myTotalForThem: opsSenderTotal,
-                theirTotalForMe: opsReceiverTotal,
-              };
-              if (!peer.keyhiveSynced) {
-                peer.keyhiveSynced = true;
-                // Doc messages were dropped while keyhiveSynced was false.
-                // Re-emit peer events so automerge-repo re-syncs — this time
-                // messages will be encrypted and sent.
-                this.emit("peer-disconnected", { peerId: message.senderId });
-                this.emit("peer-candidate", { peerId: message.senderId, peerMetadata: {} });
-              }
-            }
-            const confirmData = encode({
-              myTotalForThem: opsSenderTotal,
-              theirTotalForMe: opsReceiverTotal,
-            });
-            const confirmMsg = {
-              type: "keyhive-sync-confirmation",
-              senderId: this.peerId!,
-              targetId: message.senderId,
-              data: confirmData,
-            };
-            metrics.recordSyncConfirmationSent();
-            this.send(confirmMsg);
-          }
-        } catch (error) {
-          await this.handleIngestError(error, receivedEvents, message.senderId);
-        }
-      }
-    });
-  }
-
-  // Handle a lightweight sync check message. If counts match our beliefs,
-  // no sync is needed. Otherwise, fall back to a full sync request.
-  private async handleKeyhiveSyncCheck(
-    message: Message,
-    metrics: Metrics,
-  ): Promise<void> {
-    if (!("data" in message) || !message.data) {
-      console.error("[AMRepoKeyhive] Expected data in keyhive-sync-check");
-      return;
-    }
-    if (this.peerId === undefined) {
-      throw new Error("peerId must be defined!");
-    }
-    const peerId = this.peerId;
-
-    const checkData = decode(message.data as Uint8Array);
-    const theirTotal: number = checkData.myTotal;
-    const theirBeliefOfOurTotal: number = checkData.beliefOfTheirTotal;
-
-    metrics.recordSyncCheckReceived();
-
-    const queueEnterTime = Date.now();
-    await this.keyhiveQueue.run(async () => {
-      metrics.recordQueueWait(Date.now() - queueEnterTime);
-
-      let peer = this.peers.get(message.senderId);
-      if (!peer) {
-        // Auto-register the peer if we receive a sync check from an unknown
-        // sender (can happen if the peer-candidate event was missed due to
-        // timing/race conditions, e.g. MessageChannel adapters).
-        peer = new Peer();
-        this.peers.set(message.senderId, peer);
-      }
-
-      // Compute our actual total for the sender
-      const hashes = await this.getHashesForPeerPair(peerId, message.senderId);
-      const pendingOpHashes = await this.getCachedPendingOpHashes();
-      const ourActualTotal = hashes.size + pendingOpHashes.length;
-
-      // Check both conditions
-      const ourBeliefMatchesTheirTotal = peer.beliefCounts !== null &&
-        peer.beliefCounts.theirTotalForMe === theirTotal;
-      const theirBeliefMatchesOurTotal = theirBeliefOfOurTotal === ourActualTotal;
-
-      if (ourBeliefMatchesTheirTotal && theirBeliefMatchesOurTotal && peer.beliefCounts !== null) {
-        metrics.recordSyncCheckShortCircuited();
-        return;
-      }
-
-      // Mismatch — fall back to full sync request
-      metrics.recordSyncCheckFallback();
-
-      const opHashes = Array.from(hashes.values());
-      const data = encode({
-        found: opHashes,
-        pending: pendingOpHashes,
-      });
-      const request = {
-        type: "keyhive-sync-request",
-        senderId: peerId,
-        targetId: message.senderId,
-        data: data,
-      };
-      this.send(request);
-      peer.lastKeyhiveRequestRcvd = new Date();
-    });
-  }
-
-  // Handle a sync confirmation message. Update our beliefs about the sender's state.
-  private async handleKeyhiveSyncConfirmation(
-    message: Message,
-    metrics: Metrics,
-  ): Promise<void> {
-    if (!("data" in message) || !message.data) {
-      console.error("[AMRepoKeyhive] Expected data in keyhive-sync-confirmation");
-      return;
-    }
-
-    const confirmData = decode(message.data as Uint8Array);
-    const theirTotalForUs: number = confirmData.myTotalForThem;
-    const theirBeliefOfOurTotal: number = confirmData.theirTotalForMe;
-
-    metrics.recordSyncConfirmationReceived();
-
-    const peer = this.peers.get(message.senderId);
-    if (peer) {
-      peer.beliefCounts = {
-        myTotalForThem: theirBeliefOfOurTotal,
-        theirTotalForMe: theirTotalForUs,
-      };
-      if (!peer.keyhiveSynced) {
-        peer.keyhiveSynced = true;
-        // Doc messages were dropped while keyhiveSynced was false.
-        // Re-emit peer events so automerge-repo re-syncs — this time
-        // messages will be encrypted and sent.
-        this.emit("peer-disconnected", { peerId: message.senderId });
-        this.emit("peer-candidate", { peerId: message.senderId, peerMetadata: {} });
-      }
-    }
-
-    // After a keyhive sync round completes, CGKA keys may now be available
-    // that weren't before (e.g. after a new member's ops are ingested).
-    this.retryPendingDecrypt();
-  }
-
-  private async saveReceivedEvents(events: Uint8Array[]): Promise<void> {
-    for (const event of events) {
-      try {
-        await this.keyhiveStorage.saveEventBytesWithHash(event);
-      } catch (error) {
-        console.error("[AMRepoKeyhive] Failed to save received event:", error);
-      }
-    }
-  }
-
-  private async handleIngestError(
-    error: unknown,
-    events: Uint8Array[],
-    senderId: PeerId
-  ): Promise<void> {
-    // @ts-ignore
-    const jsError =
-      error && typeof error == "object" && "toError" in error
-        ? // @ts-ignore
-          error.toError()
-        : error;
-
-    const errorMessage =
-      jsError instanceof Error ? jsError.message : String(jsError);
-
-    console.error(
-      `[AMRepoKeyhive] Error while ingesting events from ${senderId}: ${errorMessage}`
-    );
-  }
-
-  private requestKeyhiveSync(): void {
-    if (this.peerId === undefined) {
-      return;
-    }
-    let includeContactCard = false;
-    let attemptRecovery = true;
-    this.syncKeyhive(this.peerId, includeContactCard, attemptRecovery);
-  }
-
-  private readyToSendKeyhiveRequest(targetId: PeerId): boolean {
-    const now = new Date().getTime();
-    const lastKeyhiveRequestSent: Date | undefined = this.peers.get(targetId)?.lastKeyhiveRequestSent;
-    if (!lastKeyhiveRequestSent) {
-      return true
-    }
-    return (now - lastKeyhiveRequestSent.getTime()) > this.minSyncRequestInterval
-  }
-
-  private readyToSendKeyhiveResponse(senderId: PeerId): boolean {
-    const now = new Date().getTime();
-    const lastKeyhiveRequestRcvd: Date | undefined = this.peers.get(senderId)?.lastKeyhiveRequestRcvd;
-    if (!lastKeyhiveRequestRcvd) {
-      return true
-    }
-    return (now - lastKeyhiveRequestRcvd.getTime()) > this.minSyncResponseInterval
-  }
-
-  private runCompaction(): void {
-    void this.keyhiveQueue.run(async () => {
-      await this.keyhiveStorage.compact(this.keyhive);
-    });
-  }
-
-  private static readonly MAX_DECRYPT_RETRIES = 50;
-
-  /** Retry buffered messages that previously failed decryption. Called after keyhive sync ingests new events. */
+  // FORK: CGKA encryption — retry buffered messages that failed decryption
   private retryPendingDecrypt(): void {
     if (this.pendingDecrypt.length === 0) return;
     const pending = this.pendingDecrypt.splice(0);
-    // Clear cached doc objects so we get fresh ones with new keys
     this.docObjects.clear();
     for (const entry of pending) {
       const { message, rawPayload, automergeDocId } = entry;
@@ -1672,14 +633,10 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
           const khDocId = this.docMap.get(automergeDocId);
           if (khDocId) {
             const fetched = await this.keyhive.getDocument(khDocId);
-            if (fetched) {
-              this.docObjects.set(automergeDocId, fetched);
-              doc = fetched;
-            }
+            if (fetched) { this.docObjects.set(automergeDocId, fetched); doc = fetched; }
           }
         }
         if (!doc) {
-          // Doc mapping still not available — re-buffer if under retry limit
           if (entry.retries < KeyhiveNetworkAdapter.MAX_DECRYPT_RETRIES) {
             entry.retries++;
             this.pendingDecrypt.push(entry);
@@ -1696,14 +653,12 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
             return;
           }
           message.data = decrypted;
-          // CGKA keys confirmed working — end grace period early
           if (message.type === "sync" || message.type === "request") {
             void this.checkAccessAndEmit(message);
           } else {
             this.emit("message", message);
           }
         } catch (e: any) {
-          // Still can't decrypt — re-buffer if under retry limit
           const errDetail = typeof e?.message === 'function' ? e.message() : (e?.message ?? String(e));
           if (entry.retries < KeyhiveNetworkAdapter.MAX_DECRYPT_RETRIES) {
             entry.retries++;
@@ -1717,227 +672,11 @@ export class KeyhiveNetworkAdapter extends NetworkAdapter {
     }
   }
 
-  private invalidateCaches(): void {
-    this.hashesCache.clear();
-    this.publicHashesCache = null;
-    this.publicEventsCache = null;
-    this.pendingOpHashesCache = null;
-  }
-
-  private invalidateBeliefs(): void {
-    for (const peer of this.peers.values()) {
-      peer.beliefCounts = null;
-    }
-  }
-
-  // Check if keyhive state changed and invalidate/refresh cache if needed
-  private async checkAndInvalidateCache(): Promise<void> {
-    if (this.opCache) {
-      await this.opCache.refresh(this.keyhive);
-      return;
-    }
-    const stats = await this.keyhive.stats();
-    const currentTotalOps = stats.totalOps;
-    if (currentTotalOps !== this.lastKnownTotalOps) {
-      this.lastKnownTotalOps = currentTotalOps;
-      this.invalidateCaches();
-    }
-  }
-
-  private async getCachedPendingOpHashes(metrics?: Metrics): Promise<Uint8Array[]> {
-    if (this.opCache) {
-      metrics?.recordCacheHit();
-      return this.opCache.getPendingOpHashes();
-    }
-    if (this.cacheHashes && this.pendingOpHashesCache !== null) {
-      metrics?.recordCacheHit();
-      return this.pendingOpHashesCache;
-    }
-    if (this.cacheHashes) {
-      metrics?.recordCacheMiss();
-    }
-    const hashes = await getPendingOpHashes(this.keyhive);
-    if (this.cacheHashes) {
-      this.pendingOpHashesCache = hashes;
-    }
-    return hashes;
-  }
-
-  private async getCachedPublicHashes(metrics?: Metrics): Promise<PeerHashes> {
-    if (this.opCache) {
-      metrics?.recordCacheHit();
-      return this.opCache.getPublicHashes();
-    }
-    if (this.cacheHashes && this.publicHashesCache !== null) {
-      metrics?.recordCacheHit();
-      return this.publicHashesCache;
-    }
-    if (this.cacheHashes) {
-      metrics?.recordCacheMiss();
-    }
-    const agent = await this.keyhive.getAgent(Identifier.publicId());
-    let hashes: PeerHashes;
-    if (!agent) {
-      hashes = new Map();
-    } else {
-      hashes = await getEventHashesForAgent(this.keyhive, agent);
-    }
-    if (this.cacheHashes) {
-      this.publicHashesCache = hashes;
-    }
-    return hashes;
-  }
-
-  private async getCachedPublicEvents(): Promise<Map<Uint8Array, any>> {
-    if (this.cacheHashes && this.publicEventsCache !== null) {
-      return this.publicEventsCache;
-    }
-    const agent = await this.keyhive.getAgent(Identifier.publicId());
-    const events = agent
-      ? await getEventsForAgent(this.keyhive, agent)
-      : new Map<Uint8Array, any>();
-    if (this.cacheHashes) {
-      this.publicEventsCache = events;
-    }
-    return events;
-  }
-
-  // Get event hashes for a peer. Returns null if the peer agent is unknown.
-  private async getHashesForPeer(peerId: PeerId, metrics?: Metrics): Promise<PeerHashes | null> {
-    if (this.opCache) {
-      for (const keyhiveId of this.identifiersForPeer(peerId)) {
-        const agentIdStr = keyhiveId.toBytes().toString();
-        const cached = this.opCache.getHashesForAgent(agentIdStr);
-        if (cached) {
-          metrics?.recordCacheHit();
-          return cached;
-        }
-      }
-      // Agent not in cache — might be unknown or cache stale
-      metrics?.recordCacheMiss();
-      return null;
-    }
-
-    if (this.cacheHashes) {
-      const cached = this.hashesCache.get(peerId);
-      if (cached) {
-        metrics?.recordCacheHit();
-        return cached;
-      }
-      metrics?.recordCacheMiss();
-    }
-
-    const agent = await this.getAgentForPeer(peerId);
-    if (!agent) {
-      return null;
-    }
-    const hashes = await getEventHashesForAgent(this.keyhive, agent);
-
-    if (this.cacheHashes && hashes) {
-      this.hashesCache.set(peerId, hashes);
-    }
-    return hashes;
-  }
-
-  // Returns union of hashes both peers can access, plus public hashes.
-  // Using union (not intersection) ensures prerequisite events are included:
-  // if event X is relevant to both peers but its prerequisite Y is only
-  // relevant to one peer, Y must still be in the hash set so it can be
-  // exchanged. Without Y, the receiving peer can't process X and it gets
-  // stuck in their pending store forever.
-  private async getHashesForPeerPair(
-    peerA: PeerId,
-    peerB: PeerId,
-    metrics?: Metrics,
-  ): Promise<PeerHashes> {
-    const hashLookupStart = Date.now();
-    const hashesForA = await this.getHashesForPeer(peerA, metrics) ?? new Map<string, Uint8Array>();
-    const hashesForB = await this.getHashesForPeer(peerB, metrics) ?? new Map<string, Uint8Array>();
-
-    const publicHashes = await this.getCachedPublicHashes(metrics);
-    metrics?.recordHashLookupTime(Date.now() - hashLookupStart);
-
-    const result = new Map<string, Uint8Array>(publicHashes);
-    for (const [hashString, hashBytes] of hashesForA.entries()) {
-      result.set(hashString, hashBytes);
-    }
-    for (const [hashString, hashBytes] of hashesForB.entries()) {
-      result.set(hashString, hashBytes);
-    }
-
-    return result;
-  }
-
-  // Fetch full event bytes for a set of hashes, with pre-encoded CBOR byte strings
-  private async getEventBytesForHashes(
-    peerId: PeerId,
-    hashStrings: Set<string>,
-    metrics?: Metrics,
-  ): Promise<EventBytesResult> {
-    const eventLookupStart = Date.now();
-
-    // Try OpCache first (sync server path)
-    if (this.opCache) {
-      const cached = this.opCache.getEventBytesForHashes(hashStrings);
-      if (cached) {
-        metrics?.recordEventLookupTime(Date.now() - eventLookupStart);
-        return cached;
-      }
-      // Cache miss — fall through to WASM
-    }
-
-    // Check which hashes already have stored bytes and CBOR
-    const events: Uint8Array[] = [];
-    const cborEvents: Uint8Array[] = [];
-    const missingHashes = new Set<string>();
-    for (const hashStr of hashStrings) {
-      const bytes = this.eventBytes.get(hashStr);
-      const cbor = this.eventCborBytes.get(hashStr);
-      if (bytes && cbor) {
-        events.push(bytes);
-        cborEvents.push(cbor);
-      } else {
-        missingHashes.add(hashStr);
-      }
-    }
-
-    // If all requested hashes have stored bytes, skip WASM entirely
-    if (missingHashes.size === 0) {
-      metrics?.recordEventLookupTime(Date.now() - eventLookupStart);
-      return { events, cborEvents };
-    }
-
-    // Fetch from WASM for misses
-    const agent = await this.getAgentForPeer(peerId);
-
-    const wasmEvents = new Map<Uint8Array, any>();
-
-    if (agent) {
-      const peerEvents = await getEventsForAgent(this.keyhive, agent);
-      for (const [hash, event] of peerEvents) {
-        wasmEvents.set(hash, event);
-      }
-    }
-
-    const publicEvents = await this.getCachedPublicEvents();
-    for (const [hash, event] of publicEvents) {
-      wasmEvents.set(hash, event);
-    }
-
-    // Store all fetched events and collect the ones we need
-    for (const [hash, eventBytes] of wasmEvents.entries()) {
-      const hashStr = hash.toString();
-      if (!this.eventBytes.has(hashStr)) {
-        this.eventBytes.set(hashStr, eventBytes);
-        this.eventCborBytes.set(hashStr, cborByteString(eventBytes));
-      }
-      if (missingHashes.has(hashStr)) {
-        events.push(eventBytes);
-        cborEvents.push(this.eventCborBytes.get(hashStr)!);
-      }
-    }
-
-    metrics?.recordEventLookupTime(Date.now() - eventLookupStart);
-    return { events, cborEvents };
+  private runCompaction(): void {
+    void this.keyhiveQueue.run(async () => {
+      await this.keyhiveStorage.compact(this.keyhive);
+    }).catch((error) =>
+      console.error("[AMRepoKeyhive] Compaction failed:", error)
+    );
   }
 }

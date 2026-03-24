@@ -1,8 +1,5 @@
-// Forked from @automerge/automerge-repo-keyhive v0.1.0-alpha.17x
+// Forked from @automerge/automerge-repo-keyhive v0.2.0-alpha.1
 // with CGKA encryption wired up.
-//
-// WASM initialization is handled by the original package — this fork
-// only re-exports the bridge layer with encryption hooks.
 
 import { initFromBase64Wasm } from "@keyhive/keyhive/slim";
 // @ts-expect-error

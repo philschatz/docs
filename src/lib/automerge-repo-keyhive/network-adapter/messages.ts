@@ -1,4 +1,4 @@
-import { type PeerId } from "@automerge/automerge-repo/slim";
+import { type Message, type PeerId } from "@automerge/automerge-repo/slim";
 import { encode, decode } from "cbor-x";
 
 import { ContactCard, Signed, Keyhive } from "@keyhive/keyhive/slim";
@@ -10,6 +10,11 @@ export const ENC_ENCRYPTED = 0x01;
 export type KeyhiveMessageData = {
   contactCard?: ContactCard;
   signed: Signed;
+};
+
+export type KeyhiveMessage = {
+  msg: Message;
+  data: KeyhiveMessageData;
 };
 
 export function encodeKeyhiveMessageData(msg: KeyhiveMessageData): Uint8Array {

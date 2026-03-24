@@ -24,33 +24,29 @@ import { Active } from "./active";
 import { KeyhiveNetworkAdapter } from "../network-adapter/network-adapter";
 import { KeyhiveEventEmitter } from "./emitter";
 import { docIdFromAutomergeUrl, KeyhiveStorage, receiveContactCard } from "./keyhive";
-import { encodeKeyhiveMessageData } from "../network-adapter/messages";
-
-export const KEYHIVE_DB_KEY = "keyhive-db";
-export const KEYHIVE_ARCHIVES_KEY = "/archives/";
-export const KEYHIVE_EVENTS_KEY = "/ops/";
+import { signData } from "../network-adapter/messages";
 
 // TODO: This is temporarily for calculating "best access". Move this and
 // the best access method to WASM API.
 const accessLevels: Record<string, number> = {
-  "None": 0,
-  "Pull": 1,
-  "Read": 2,
-  "Write": 3,
-  "Admin": 4,
-}
+  None: 0,
+  Pull: 1,
+  Read: 2,
+  Write: 3,
+  Admin: 4,
+};
 
 export class AutomergeRepoKeyhive {
   constructor(
-    public active: Active,
-    public keyhive: Keyhive,
-    public keyhiveStorage: KeyhiveStorage,
-    public peerId: PeerId,
-    public syncServer: SyncServer,
-    public networkAdapter: KeyhiveNetworkAdapter,
-    public emitter: KeyhiveEventEmitter,
-    public idFactory: (heads: Heads) => Promise<Uint8Array>,
-    public createKeyhiveNetworkAdapter: (networkAdapter: NetworkAdapter, onlyShareWithHardcodedServerPeerId: boolean, periodicallyRequestSync: boolean, syncRequestInterval: number, batchInterval?: number) => KeyhiveNetworkAdapter,
+    public readonly active: Active,
+    public readonly keyhive: Keyhive,
+    public readonly keyhiveStorage: KeyhiveStorage,
+    public readonly peerId: PeerId,
+    public readonly syncServer: SyncServer,
+    public readonly networkAdapter: KeyhiveNetworkAdapter,
+    public readonly emitter: KeyhiveEventEmitter,
+    public readonly idFactory: (heads: Heads) => Promise<Uint8Array>,
+    public readonly createKeyhiveNetworkAdapter: (networkAdapter: NetworkAdapter, onlyShareWithHardcodedServerPeerId: boolean, periodicallyRequestSync: boolean, syncRequestInterval: number, batchInterval?: number, archiveThreshold?: number) => KeyhiveNetworkAdapter,
   ) {}
 
   // Configure `AutomergeRepoKeyhive` to notify the provided `Repo` about
@@ -60,17 +56,21 @@ export class AutomergeRepoKeyhive {
     const debounceMs = options?.debounceMs ?? 2000
     const onBefore = options?.onBeforeShareConfigChanged
     let timer: ReturnType<typeof setTimeout> | null = null
-    let dirty = false;
+    let inProgress = false;
 
     (this.networkAdapter as any).on("ingest-remote", () => {
-      dirty = true
+      inProgress = true
       if (timer) return
       timer = setTimeout(() => {
         timer = null
-        if (!dirty) return
-        dirty = false
-        onBefore?.()
-        repo.shareConfigChanged()
+        if (!inProgress) return
+        inProgress = false
+        try {
+          onBefore?.()
+          repo.shareConfigChanged()
+        } catch (e) {
+          console.error(`[AMRepoKeyhive] shareConfigChanged() threw:`, e)
+        }
       }, debounceMs)
     })
   }
@@ -95,10 +95,9 @@ export class AutomergeRepoKeyhive {
     }
 
     const docId: KeyhiveDocumentId = docIdFromAutomergeUrl(docUrl);
-    if (!docId) {
-      console.error(`[AMRepoKeyhive] Failed to parse docId from AutomergeUrl`);
-      return;
-    }
+    console.debug(
+      `[AMRepoKeyhive] addMemberToDoc: From url ${docUrl} derived Doc Id ${docId.toBytes()}`
+    );
     const doc = await this.keyhive.getDocument(docId);
     if (!doc) {
       console.error(`[AMRepoKeyhive] Failed to add member: doc not found for id ${docId}`);
@@ -185,34 +184,27 @@ export class AutomergeRepoKeyhive {
 
   async bestAccessForDoc(id: Identifier, docUrl: AutomergeUrl): Promise<Access | undefined> {
     const docId = docIdFromAutomergeUrl(docUrl);
-    const idAccess = await this.accessForDoc(id, docId)
+    console.debug(`[AMRepoKeyhive] bestAccessForDoc: docId=${docId}`)
+    const idAccess = await this.accessForDoc(id, docId);
     const idStr = idAccess ? idAccess.toString() : "None";
-    const idAccessLevel = accessLevels[idAccess ? idAccess.toString() : "None"]
+    const idAccessLevel = accessLevels[idStr];
     const publicId = Identifier.publicId();
     const publicAccess = await this.keyhive.accessForDoc(publicId, docId);
     const publicStr = publicAccess ? publicAccess.toString() : "None";
-    const publicAccessLevel = accessLevels[publicAccess ? publicAccess.toString() : "None"]
+    const publicAccessLevel = accessLevels[publicStr];
+    console.debug(`[AMRepoKeyhive] bestAccessForDoc: docId=${docId}, idStr=${idStr}, publicStr=${publicStr}, idAccessLevel=${idAccessLevel}, publicAccessLevel=${publicAccessLevel}`);
     return (idAccessLevel > publicAccessLevel) ? idAccess : publicAccess;
   }
 
-  async docMemberCapabilities(doc_id: KeyhiveDocumentId): Promise<Membership[]> {
-    return await this.keyhive.docMemberCapabilities(doc_id);
+  async docMemberCapabilities(docId: KeyhiveDocumentId): Promise<Membership[]> {
+    return await this.keyhive.docMemberCapabilities(docId);
   }
 
   async signData(
     data: Uint8Array,
     contactCard?: ContactCard
   ): Promise<Uint8Array> {
-    try {
-      const signed = await this.keyhive.trySign(data);
-      return encodeKeyhiveMessageData({
-        contactCard,
-        signed,
-      });
-    } catch (error) {
-      console.error("[AMRepoKeyhive] Error during signing:", error);
-      throw error;
-    }
+    return signData(this.keyhive, data, contactCard);
   }
 
   keyhiveIdFactory(): (heads: Heads) => Promise<Uint8Array> {
@@ -226,12 +218,13 @@ export class AutomergeRepoKeyhive {
 
 async function generateDoc(kh: Keyhive): Promise<KeyhiveDocument> {
   // For now, randomly generate a ChangeId
-  const changeIdArray = Uint8Array.from({ length: 10 }, () =>
-    Math.floor(Math.random() * 256)
-  );
+  const changeIdArray = crypto.getRandomValues(new Uint8Array(10));
   const changeId = new ChangeId(changeIdArray);
   const g = await kh.generateGroup([]);
   const doc = await kh.generateDocument([g.toPeer()], changeId, []);
+  console.debug(
+    `[AMRepoKeyhive] Generated Keyhive document with id ${doc.doc_id.toBytes()}`
+  );
   return doc;
 }
 

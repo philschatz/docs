@@ -7,7 +7,9 @@ export function peerIdFromSigner(signer: Signer, suffix: string = ""): PeerId {
   return peerIdFromVerifyingKey(signer.verifyingKey, suffix);
 }
 
-/** Returns true if the peer ID prefix is a valid base64-encoded Ed25519 verifying key (32 bytes). */
+// FORK: CGKA encryption — detect keyhive peers by checking if their ID prefix
+// decodes to a 32-byte verifying key. Non-keyhive peers (e.g. relay servers)
+// skip signature verification and encryption.
 export function isKeyhivePeerId(peerId: PeerId): boolean {
   const prefix = verifyingKeyPeerIdWithoutSuffix(peerId);
   try {
@@ -40,6 +42,15 @@ export function uint8ArrayToHex(arr: Uint8Array): string {
     .join("");
 }
 
+// WASM errors have a toError() method that returns a proper JS Error.
+// This unwraps them if present, otherwise returns the original error.
+export function unwrapWasmError(error: unknown): unknown {
+  if (error && typeof error === "object" && "toError" in error && typeof (error as any).toError === "function") {
+    return (error as any).toError();
+  }
+  return error;
+}
+
 export function hexToUint8Array(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
@@ -51,8 +62,9 @@ export function hexToUint8Array(hex: string): Uint8Array {
 export async function getEventsForAgent(
   keyhive: Keyhive,
   agent: Agent,
-): Promise<Map<Uint8Array, any>> {
-  return await keyhive.eventsForAgent(agent);
+): Promise<Map<Uint8Array, Uint8Array>> {
+  // WASM binding types this as Map<Uint8Array, any>; values are always event bytes
+  return await keyhive.eventsForAgent(agent) as Map<Uint8Array, Uint8Array>;
 }
 
 // Returns event hashes for an agent as Map<hashString, hashBytes>
@@ -62,16 +74,16 @@ export async function getEventHashesForAgent(
 ): Promise<Map<string, Uint8Array>> {
   const hashMap = new Map<string, Uint8Array>();
 
-  // eventsForAgent returns Map<hashBytes, eventBytes> — we only need the keys
-  const events: Map<Uint8Array, any> = await keyhive.eventsForAgent(agent);
-  for (const hashBytes of events.keys()) {
-    hashMap.set(hashBytes.toString(), hashBytes);
+  // Get relevant membership + prekey hashes for the agent
+  const eventHashes: Uint8Array[] = await keyhive.eventHashesForAgent(agent);
+  for (const hash of eventHashes) {
+    hashMap.set(hash.toString(), hash);
   }
 
-  // keyOps returns Map<hashBytes, eventBytes> — prekey operation hashes
-  const keyOps: Map<Uint8Array, any> = await agent.keyOps();
-  for (const hashBytes of keyOps.keys()) {
-    hashMap.set(hashBytes.toString(), hashBytes);
+  // Get the agent's own prekey hashes
+  const keyOpHashes: Uint8Array[] = await agent.keyOpHashes();
+  for (const hash of keyOpHashes) {
+    hashMap.set(hash.toString(), hash);
   }
 
   return hashMap;
