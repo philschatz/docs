@@ -8,7 +8,8 @@ import { buildSyncResponseCbor, buildSyncOpsCbor, buildCborByteStringArray } fro
 import { PromiseQueue } from "./pending";
 import { Metrics } from "./metrics";
 import type { PeerHashes, EventBytesResult } from "./sync-data";
-import { keyhiveIdentifierFromPeerId, unwrapWasmError } from "../utilities";
+// FORK: CGKA encryption — import isKeyhivePeerId to skip non-keyhive peers (e.g. relay server)
+import { keyhiveIdentifierFromPeerId, isKeyhivePeerId, unwrapWasmError } from "../utilities";
 import {
   receiveContactCard,
   KeyhiveStorage,
@@ -203,6 +204,10 @@ export class SyncProtocol {
       console.debug(`[AMRepoKeyhive] Syncing with ${this.peers.size} peers`);
       for (const targetId of this.peers.keys()) {
         if (targetId === senderId || targetId === peerId) {
+          continue;
+        }
+        // FORK: CGKA encryption — skip non-keyhive peers (e.g. relay server)
+        if (!isKeyhivePeerId(targetId)) {
           continue;
         }
         if (!this.readyToSendKeyhiveRequest(targetId)) {
