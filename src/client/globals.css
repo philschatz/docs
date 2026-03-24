@@ -27,6 +27,15 @@
   --radius: 0.5rem;
 }
 
+@keyframes progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+@theme {
+  --animate-progress-indeterminate: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }

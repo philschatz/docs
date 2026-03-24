@@ -515,7 +515,7 @@ export function Home({ path }: { path?: string }) {
                 ))}
               </a>
               {entry.loading ? (
-                <Progress className="w-16" value={0} title="Loading..." />
+                <Progress className="w-16" indeterminate title="Loading..." />
               ) : (
                 <>
                   <a href={viewPath} className="text-xs text-muted-foreground no-underline" style={{ minWidth: '4rem', textAlign: 'right' }} title={entry.lastUpdated || undefined}>
