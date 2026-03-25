@@ -26,6 +26,7 @@ export interface KeyhiveOpsSideEffects {
   registerDoc: (automergeDocId: string, khDocId: any) => void;
   forceResyncAllPeers: () => void;
   findDoc: (docId: string) => void;
+  saveEventBytes: (eventBytes: Uint8Array) => Promise<void>;
 }
 
 /** The subset of @keyhive/keyhive/slim that KeyhiveOps needs as constructors/factories. */
@@ -262,6 +263,15 @@ export class KeyhiveOps {
     const inviteArchiveOut = await inviteKh.toArchive();
     await this.kh.ingestArchive(inviteArchiveOut);
     await this.kh.ingestEventsBytes(eventsArr);
+
+    // Persist claim events individually so ingestKeyhiveFromStorage can
+    // re-process them later once predecessors arrive from peer sync.
+    // Without this, CGKA membership ops that go to "pending" (missing
+    // predecessors) are lost — they only exist in WASM memory, never reach
+    // the events store, and can never be served to the inviter.
+    for (const eventBytes of eventsArr) {
+      await this.fx.saveEventBytes(eventBytes);
+    }
 
     const khDocId = bytesToBase64(inviteDoc.id.toBytes());
     this.inviteAccessOverrides.set(khDocId, inviteAccessStr);

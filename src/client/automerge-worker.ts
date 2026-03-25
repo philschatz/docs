@@ -426,6 +426,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           registerDoc: (amDocId, khDocId) => khIntegration!.networkAdapter.registerDoc(amDocId, khDocId),
           forceResyncAllPeers: () => (khIntegration!.networkAdapter as any).forceResyncAllPeers(),
           findDoc: (docId) => secureRepo!.find(docId as any),
+          saveEventBytes: (eventBytes) => khIntegration!.keyhiveStorage.saveEventBytesWithHash(eventBytes),
         });
 
         const secureNs = secureRepo.networkSubsystem;

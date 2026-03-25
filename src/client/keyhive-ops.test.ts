@@ -39,6 +39,7 @@ function noopSideEffects(): KeyhiveOpsSideEffects & { calls: Record<string, any[
     registerDoc: [],
     forceResyncAllPeers: [],
     findDoc: [],
+    saveEventBytes: [],
   };
   return {
     calls,
@@ -47,6 +48,7 @@ function noopSideEffects(): KeyhiveOpsSideEffects & { calls: Record<string, any[
     registerDoc: (a, b) => { calls.registerDoc.push([a, b]); },
     forceResyncAllPeers: () => { calls.forceResyncAllPeers.push([]); },
     findDoc: (d) => { calls.findDoc.push([d]); },
+    saveEventBytes: async (e) => { calls.saveEventBytes.push([e]); },
   };
 }
 
@@ -239,6 +241,25 @@ describe('KeyhiveOps', () => {
       expect(fxB.calls.forceResyncAllPeers.length).toBe(1);
       expect(fxB.calls.findDoc.length).toBe(1);
       expect(fxB.calls.findDoc[0][0]).toBe('doc-1');
+    });
+
+    it('saves claim events to storage so pending CGKA ops can be re-processed', async () => {
+      const { ops: opsA } = await createOps();
+      const { ops: opsB, fx: fxB } = await createOps();
+
+      const { khDocId } = await opsA.enableSharing('doc-1');
+      const invite = await opsA.generateInvite(khDocId, 'write');
+      await claimViaArchive(opsA, opsB, invite.inviteKeyBytes, 'doc-1');
+
+      // claimInviteWithKeyhive must persist each event individually so
+      // ingestKeyhiveFromStorage can re-process them once predecessors
+      // arrive from peer sync. Without this, CGKA membership ops stuck
+      // in "pending" never reach the inviter.
+      expect(fxB.calls.saveEventBytes.length).toBeGreaterThan(0);
+      for (const [eventBytes] of fxB.calls.saveEventBytes) {
+        expect(eventBytes).toBeInstanceOf(Uint8Array);
+        expect(eventBytes.length).toBeGreaterThan(0);
+      }
     });
 
     it('sets inviteAccessOverrides to the correct access level', async () => {
