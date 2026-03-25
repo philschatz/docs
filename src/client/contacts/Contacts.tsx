@@ -4,7 +4,7 @@ import { Alert } from '@/components/ui/alert';
 import { EditableName } from '@/components/EditableName';
 import { getDocMembers, type MemberInfo } from '../shared/keyhive-api';
 import { keyhiveReady } from '../shared/automerge';
-import { getContactName, getAllContactNames } from '../contact-names';
+import { getContactName, getAllContactNames, removeContactName } from '../contact-names';
 import { getDocList } from '../doc-storage';
 import { type DocType, viewPathForType, iconForType } from '../shared/doc-type-helpers';
 
@@ -101,6 +101,13 @@ export function Contacts({ path }: { path?: string }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const handleDelete = (contact: ContactEntry) => {
+    const name = getContactName(contact.agentId) || contact.agentId.slice(0, 12);
+    if (!confirm(`Remove contact "${name}"?`)) return;
+    removeContactName(contact.agentId);
+    setContacts(prev => prev.filter(c => c.agentId !== contact.agentId));
+  };
+
   const COLLAPSED_LIMIT = 3;
 
   return (
@@ -142,6 +149,13 @@ export function Contacts({ path }: { path?: string }) {
                   {contact.isGroup ? 'group' : 'person'}
                 </span>
                 <EditableName agentId={contact.agentId} />
+                <button
+                  className="inline-flex items-center justify-center h-6 w-6 rounded-md text-destructive hover:bg-destructive/10 ml-auto"
+                  title="Remove contact"
+                  onClick={() => handleDelete(contact)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                </button>
               </div>
               <div className="ml-6 mt-1 flex flex-col gap-0.5">
                 {contact.docs.length === 0 && (
