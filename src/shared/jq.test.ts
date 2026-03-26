@@ -557,26 +557,29 @@ describe('jq', () => {
 
   // ---- HOME_SUMMARY_QUERY ----
   describe('HOME_SUMMARY_QUERY', () => {
-    const query = '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), rowCount: (if .sheets then (.sheets | to_entries | .[0].value.rows // {} | length) else 0 end) }';
+    const query = '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), cellCount: (if .sheets then [.sheets[].cells // {} | length] | add else 0 end) }';
 
     it('Calendar document', () => {
       const doc = { '@type': 'Calendar', name: 'Work', events: { a: {}, b: {} } };
-      expect(one(query, doc)).toEqual({ type: 'Calendar', name: 'Work', eventCount: 2, taskCount: 0, rowCount: 0 });
+      expect(one(query, doc)).toEqual({ type: 'Calendar', name: 'Work', eventCount: 2, taskCount: 0, cellCount: 0 });
     });
 
     it('TaskList document', () => {
       const doc = { '@type': 'TaskList', name: 'Todo', tasks: { t1: {}, t2: {}, t3: {} } };
-      expect(one(query, doc)).toEqual({ type: 'TaskList', name: 'Todo', eventCount: 0, taskCount: 3, rowCount: 0 });
+      expect(one(query, doc)).toEqual({ type: 'TaskList', name: 'Todo', eventCount: 0, taskCount: 3, cellCount: 0 });
     });
 
     it('DataGrid document', () => {
-      const doc = { '@type': 'DataGrid', name: 'Sheet', sheets: { s1: { rows: { r1: {}, r2: {} } } } };
-      expect(one(query, doc)).toEqual({ type: 'DataGrid', name: 'Sheet', eventCount: 0, taskCount: 0, rowCount: 2 });
+      const doc = { '@type': 'DataGrid', name: 'Sheet', sheets: {
+        s1: { cells: { 'r1:c1': { value: 'a' }, 'r1:c2': { value: 'b' } } },
+        s2: { cells: { 'r1:c1': { value: 'x' } } },
+      } };
+      expect(one(query, doc)).toEqual({ type: 'DataGrid', name: 'Sheet', eventCount: 0, taskCount: 0, cellCount: 3 });
     });
 
     it('empty document', () => {
       const doc = { '@type': 'Calendar', name: '' };
-      expect(one(query, doc)).toEqual({ type: 'Calendar', name: '', eventCount: 0, taskCount: 0, rowCount: 0 });
+      expect(one(query, doc)).toEqual({ type: 'Calendar', name: '', eventCount: 0, taskCount: 0, cellCount: 0 });
     });
   });
 });

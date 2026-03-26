@@ -51,7 +51,7 @@ function applyQueryResult(prev: DocEntry[], docId: string, result: any, lastModi
     if (e.documentId !== docId) return e;
     const type = (result.type === 'Calendar' || result.type === 'TaskList' || result.type === 'DataGrid')
       ? result.type as DocType : 'unknown';
-    const count = result.eventCount || result.taskCount || result.rowCount || null;
+    const count = result.eventCount || result.taskCount || result.cellCount || null;
     const lastUpdated = lastModified ? new Date(lastModified * 1000).toISOString() : e.lastUpdated;
     return { ...e, type, name: result.name || e.name, count, lastUpdated, loading: false };
   });
@@ -524,7 +524,7 @@ export function Home({ path }: { path?: string }) {
                     {relativeTime(entry.lastUpdated)}
                   </a>
                   <a href={viewPath} className="text-xs text-muted-foreground no-underline">
-                    ({entry.count ?? 0})
+                    ({(entry.count ?? 0).toLocaleString()})
                   </a>
                 </>
               )}
