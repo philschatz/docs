@@ -70,7 +70,9 @@ export type WorkerToMain =
   | { type: 'doc-list-updated'; list: Array<{ id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string }> }
   | { type: 'contact-names-updated'; names: Record<string, string> }
   // Keyhive responses
-  | { type: 'kh-result'; id: number; result?: any; error?: string };
+  | { type: 'kh-result'; id: number; result?: any; error?: string }
+  // Keyhive state changed (membership/access may have changed)
+  | { type: 'kh-state-changed' };
 
 // Queue messages that arrive while WASM is initializing
 const pendingMessages: MessageEvent[] = [];
@@ -417,6 +419,8 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
             // After keyhive ingests remote ops, check for newly discovered documents
             // (e.g. Bob was added as a member by Alice — the doc should appear in Bob's list)
             void checkForNewKeyhiveDocs();
+            // Notify main thread so useAccess/Home can re-check access levels
+            (self as any).postMessage({ type: 'kh-state-changed' } satisfies WorkerToMain);
           },
         });
 

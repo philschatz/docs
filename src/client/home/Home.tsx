@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useConnectionStatus, usePeerList } from '../shared/automerge';
 import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
-import { getMyAccess } from '../shared/keyhive-api';
+import { getMyAccess, onKeyhiveStateChanged } from '../shared/keyhive-api';
+import { getCachedAccess } from '../shared/useAccess';
 import { peerColor, peerDisplayName } from '../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
@@ -46,6 +47,7 @@ function initialEntries(): DocEntry[] {
     loading: true,
     peers: [],
     encrypted: e.encrypted,
+    access: e.encrypted && e.khDocId ? getCachedAccess(e.khDocId) : undefined,
   }));
 }
 
@@ -109,22 +111,28 @@ export function Home({ path }: { path?: string }) {
     );
 
     // Fetch keyhive access for encrypted docs
-    for (const docId of docIds) {
-      const entry = getDocList().find(e => e.id === docId);
-      if (entry?.encrypted && entry.khDocId) {
-        getMyAccess(entry.khDocId).then(access => {
-          setEntries(prev => prev.map(e =>
-            e.documentId === docId ? { ...e, access: access?.toLowerCase() ?? null } : e
-          ));
-        }).catch(() => {
-          setEntries(prev => prev.map(e =>
-            e.documentId === docId ? { ...e, access: null } : e
-          ));
-        });
+    const fetchAccessForDocs = () => {
+      for (const docId of docIds) {
+        const entry = getDocList().find(e => e.id === docId);
+        if (entry?.encrypted && entry.khDocId) {
+          getMyAccess(entry.khDocId).then(access => {
+            setEntries(prev => prev.map(e =>
+              e.documentId === docId ? { ...e, access: access?.toLowerCase() ?? null } : e
+            ));
+          }).catch(() => {
+            setEntries(prev => prev.map(e =>
+              e.documentId === docId ? { ...e, access: null } : e
+            ));
+          });
+        }
       }
-    }
+    };
+    fetchAccessForDocs();
 
-    return () => unsubs.forEach(u => u());
+    // Re-fetch access when keyhive state changes (member added/revoked)
+    const unsubStateChanged = onKeyhiveStateChanged(fetchAccessForDocs);
+
+    return () => { unsubs.forEach(u => u()); unsubStateChanged(); };
   }, [docIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -514,6 +522,7 @@ export function Home({ path }: { path?: string }) {
       <div className="flex flex-col">
         {sortedEntries.map(entry => {
           const disabled = !showUnencrypted && !entry.encrypted;
+          const noEntryAccess = entry.encrypted && entry.access === null;
           const viewPath = viewPathForType(entry.type, entry.documentId);
           const icon = iconForType(entry.type);
           return (
@@ -525,7 +534,7 @@ export function Home({ path }: { path?: string }) {
                 {entry.encrypted ? 'lock' : 'visibility'}
               </span>
               <span className="material-symbols-outlined" style={{ width: '1.2rem', textAlign: 'center', color: '#666' }}>{icon}</span>
-              <a href={viewPath} className="text-sm flex-1 hover:underline flex items-center gap-1">
+              <a href={viewPath} className="text-sm flex-1 hover:underline flex items-center gap-1" style={noEntryAccess ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>
                 {entry.name || 'Untitled'}
                 {entry.peers.map(peerId => (
                   <span

@@ -1,15 +1,21 @@
 import { renderHook, act, waitFor } from '@testing-library/preact';
 
 let mockGetMyAccess: jest.Mock;
+const stateChangeListeners = new Set<() => void>();
 
 jest.mock('./keyhive-api', () => ({
   getMyAccess: (...args: any[]) => mockGetMyAccess(...args),
+  onKeyhiveStateChanged: (fn: () => void) => {
+    stateChangeListeners.add(fn);
+    return () => { stateChangeListeners.delete(fn); };
+  },
 }));
 
 import { useAccess } from './useAccess';
 
 beforeEach(() => {
   mockGetMyAccess = jest.fn(() => Promise.resolve(null));
+  stateChangeListeners.clear();
 });
 
 describe('useAccess', () => {
@@ -66,5 +72,35 @@ describe('useAccess', () => {
     const { result } = renderHook(() => useAccess('kh-doc-1'));
     await waitFor(() => expect(result.current.loaded).toBe(true));
     expect(result.current).toEqual({ access: null, canEdit: false, loaded: true });
+  });
+
+  it('re-fetches access when keyhive state changes', async () => {
+    mockGetMyAccess.mockResolvedValue('Write');
+    const { result } = renderHook(() => useAccess('kh-doc-1'));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.access).toBe('write');
+
+    // Simulate access revocation
+    mockGetMyAccess.mockResolvedValue(null);
+    await act(async () => {
+      for (const fn of stateChangeListeners) fn();
+    });
+    await waitFor(() => expect(result.current.access).toBe(null));
+    expect(result.current.canEdit).toBe(false);
+  });
+
+  it('re-fetches access when keyhive state changes (grant)', async () => {
+    mockGetMyAccess.mockResolvedValue('Read');
+    const { result } = renderHook(() => useAccess('kh-doc-1'));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.canEdit).toBe(false);
+
+    // Simulate access upgrade
+    mockGetMyAccess.mockResolvedValue('Admin');
+    await act(async () => {
+      for (const fn of stateChangeListeners) fn();
+    });
+    await waitFor(() => expect(result.current.access).toBe('admin'));
+    expect(result.current.canEdit).toBe(true);
   });
 });

@@ -45,6 +45,21 @@ function request<T>(type: string, payload: Record<string, any> = {}): Promise<T>
   });
 }
 
+// ── Keyhive state change notifications ────────────────────────────────
+
+const stateChangeListeners = new Set<() => void>();
+
+/** Subscribe to keyhive state changes (membership/access may have changed). */
+export function onKeyhiveStateChanged(fn: () => void): () => void {
+  stateChangeListeners.add(fn);
+  return () => { stateChangeListeners.delete(fn); };
+}
+
+/** Called from automerge.ts when the worker posts kh-state-changed. */
+export function handleKeyhiveStateChanged(): void {
+  for (const fn of stateChangeListeners) fn();
+}
+
 // ── Public API ─────────────────────────────────────────────────────────
 
 export interface DeviceInfo {

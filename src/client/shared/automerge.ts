@@ -3,7 +3,7 @@ export type { Presence } from '@automerge/automerge-repo';
 export type { DocHandle, DocumentId, PeerId } from '@automerge/automerge-repo';
 export type { PeerState, PresenceState } from '@automerge/automerge-repo';
 import type { WorkerToMain } from '../automerge-worker';
-import { initKeyhiveApi, handleKeyhiveResponse, registerDocMapping } from './keyhive-api';
+import { initKeyhiveApi, handleKeyhiveResponse, handleKeyhiveStateChanged, registerDocMapping } from './keyhive-api';
 import { getDocEntry, getDocList, setDocListDispatch, applyDocListFromWorker } from '../doc-storage';
 import { setContactNamesDispatch, applyContactNamesFromWorker } from '../contact-names';
 
@@ -113,6 +113,8 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
     applyContactNamesFromWorker(msg.names);
   } else if (msg.type === 'kh-result') {
     handleKeyhiveResponse(msg);
+  } else if (msg.type === 'kh-state-changed') {
+    handleKeyhiveStateChanged();
   } else {
     // Route to registered handlers (worker-api.ts etc.)
     for (const handler of extraMessageHandlers) {
