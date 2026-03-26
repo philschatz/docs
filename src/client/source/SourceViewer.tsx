@@ -420,9 +420,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
         peers={peerList}
         peerTitle={(peer) => `${peerDisplayName(peer.peerId)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         showSourceLink={false}
-        khDocId={docId ? getDocEntry(docId)?.khDocId : undefined}
-        sharingGroupId={docId ? getDocEntry(docId)?.sharingGroupId : undefined}
-        onSharingEnabled={(khDocId, groupId) => { if (docId) updateDocCache(docId, { khDocId, sharingGroupId: groupId }); }}
+        onSharingEnabled={(groupId) => { if (docId) updateDocCache(docId, { sharingGroupId: groupId }); }}
       >
         {snapshot && (
           <Button variant="outline" size="sm" onClick={handleDownloadJson}>

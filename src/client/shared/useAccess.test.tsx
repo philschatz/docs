@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 describe('useAccess', () => {
-  it('returns canEdit: true and loaded: true when no khDocId (unshared doc)', () => {
+  it('returns canEdit: true and loaded: true when no docId (unshared doc)', () => {
     const { result } = renderHook(() => useAccess(undefined));
     expect(result.current).toEqual({ access: null, canEdit: true, loaded: true });
     expect(mockGetMyAccess).not.toHaveBeenCalled();

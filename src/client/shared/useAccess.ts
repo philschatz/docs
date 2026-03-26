@@ -10,16 +10,16 @@ function readAccessCache(): Record<string, string> {
   catch { return {}; }
 }
 
-function writeAccessCache(khDocId: string, access: AccessLevel): void {
+function writeAccessCache(docId: string, access: AccessLevel): void {
   const cache = readAccessCache();
-  if (access === null) delete cache[khDocId];
-  else cache[khDocId] = access;
+  if (access === null) delete cache[docId];
+  else cache[docId] = access;
   localStorage.setItem(ACCESS_CACHE_KEY, JSON.stringify(cache));
 }
 
-export function getCachedAccess(khDocId: string): AccessLevel {
+export function getCachedAccess(docId: string): AccessLevel {
   const cache = readAccessCache();
-  return (cache[khDocId] as AccessLevel) ?? null;
+  return (cache[docId] as AccessLevel) ?? null;
 }
 
 /**
@@ -29,28 +29,28 @@ export function getCachedAccess(khDocId: string): AccessLevel {
  * `loaded` distinguishes "still fetching" from "confirmed no access".
  * Re-fetches automatically when keyhive state changes (e.g. member added/revoked).
  */
-export function useAccess(khDocId: string | undefined): { access: AccessLevel; canEdit: boolean; loaded: boolean } {
-  const cached = khDocId ? getCachedAccess(khDocId) : null;
+export function useAccess(docId: string | undefined): { access: AccessLevel; canEdit: boolean; loaded: boolean } {
+  const cached = docId ? getCachedAccess(docId) : null;
   const [access, setAccess] = useState<AccessLevel>(cached);
   const [loaded, setLoaded] = useState(!!cached);
 
   const fetchAccess = useCallback(() => {
-    if (!khDocId) {
+    if (!docId) {
       setAccess(null);
       setLoaded(true);
       return;
     }
-    getMyAccess(khDocId).then(a => {
+    getMyAccess(docId).then(a => {
       const level = (a?.toLowerCase() ?? null) as AccessLevel;
       setAccess(level);
       setLoaded(true);
-      writeAccessCache(khDocId, level);
+      writeAccessCache(docId, level);
     }).catch(() => {
       setAccess(null);
       setLoaded(true);
-      writeAccessCache(khDocId, null);
+      writeAccessCache(docId, null);
     });
-  }, [khDocId]);
+  }, [docId]);
 
   // Initial fetch
   useEffect(() => {
@@ -60,11 +60,11 @@ export function useAccess(khDocId: string | undefined): { access: AccessLevel; c
 
   // Re-fetch when keyhive state changes (membership/access updated)
   useEffect(() => {
-    if (!khDocId) return;
+    if (!docId) return;
     return onKeyhiveStateChanged(fetchAccess);
-  }, [khDocId, fetchAccess]);
+  }, [docId, fetchAccess]);
 
-  if (!khDocId) {
+  if (!docId) {
     return { access: null, canEdit: true, loaded: true };
   }
 

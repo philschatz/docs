@@ -17,6 +17,5 @@ export {
   claimInvite,
   enableSharing,
   registerSharingGroup,
-  registerDocMapping,
 } from '../worker-api';
 export type { DeviceInfo, IdentityInfo, MemberInfo } from '../worker-api';

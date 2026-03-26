@@ -42,9 +42,9 @@ export function Contacts({ path }: { path?: string }) {
     try {
       // Ensure worker has pushed contact names before we read the cache
       await keyhiveReady;
-      const docs = getDocList().filter(d => d.encrypted && d.khDocId);
+      const docs = getDocList().filter(d => d.encrypted);
       const results = await Promise.allSettled(
-        docs.map(d => getDocMembers(d.khDocId!))
+        docs.map(d => getDocMembers(d.id))
       );
 
       const map = new Map<string, ContactEntry>();

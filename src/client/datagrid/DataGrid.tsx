@@ -69,10 +69,10 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const validationErrors = useDocumentValidation(docId);
   const { undo, redo, canUndo, canRedo, onHeadsUpdate } = useUndoRedo(docId!);
   const history = useDocumentHistory(docId!);
-  const dgKhDocId = getDocEntry(docId!)?.khDocId;
-  const { access: dgAccess, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(dgKhDocId);
+  const dgEncrypted = !!getDocEntry(docId!)?.encrypted;
+  const { access: dgAccess, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(dgEncrypted ? docId : undefined);
   const canEdit = !readOnly && history.editable && accessCanEdit;
-  const noAccess = !!dgKhDocId && accessLoaded && dgAccess === null;
+  const noAccess = dgEncrypted && accessLoaded && dgAccess === null;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const hfRef = useRef<HyperFormula | null>(null);
@@ -1090,10 +1090,8 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
         peers={peerList}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
-        khDocId={getDocEntry(docId!)?.khDocId}
         docType="DataGrid"
-        sharingGroupId={getDocEntry(docId!)?.sharingGroupId}
-        onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
+        onSharingEnabled={(groupId) => updateDocCache(docId!, { sharingGroupId: groupId })}
       />
       <HistorySlider history={history} />
       <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>

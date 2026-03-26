@@ -6,8 +6,6 @@ interface DocEntry {
   name?: string;
   /** If true, document content is encrypted via keyhive. */
   encrypted?: boolean;
-  /** Keyhive document ID (base64-encoded bytes) for encryption/decryption. */
-  khDocId?: string;
   /** Keyhive sharing group ID (base64-encoded). Needed to restore after reload. */
   sharingGroupId?: string;
 }

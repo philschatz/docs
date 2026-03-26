@@ -61,16 +61,10 @@ async function shareOrCopy(url: string): Promise<boolean> {
 
 
 interface AccessControlProps {
-  /** Keyhive document ID (base64-encoded). */
-  khDocId: string | undefined;
-  /** Automerge document ID (for invite URL construction). */
+  /** Automerge document ID. */
   docId: string;
   /** Document type (Calendar/TaskList/DataGrid) — embedded in invite URL so invitee can redirect correctly. */
   docType?: string;
-  /** Sharing group ID (base64-encoded). */
-  sharingGroupId?: string;
-  /** Called when group ID changes (e.g. recreated after reload). */
-  onGroupIdChange?: (groupId: string) => void;
   /** Current access level — shown as icon on the trigger button. */
   access?: string | null;
 }
@@ -91,7 +85,7 @@ function accessIcon(access: string | null | undefined): string {
   }
 }
 
-export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroupIdChange, access: accessProp }: AccessControlProps) {
+export function AccessControl({ docId, docType, access: accessProp }: AccessControlProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
   const [myAccess, setMyAccess] = useState<string | null>(null);
@@ -106,10 +100,9 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   const isAdmin = myAccess?.toLowerCase() === 'admin';
 
   const checkInvites = useCallback(async (currentMembers?: MemberInfo[], currentInvites?: InviteRecord[]) => {
-    if (!khDocId) return;
     const resolved = currentMembers && currentInvites
       ? { members: currentMembers, invites: currentInvites }
-      : await getDocMembers(khDocId);
+      : await getDocMembers(docId);
     const records = currentInvites ?? resolved.invites;
     if (records.length === 0) { setInviteStatuses([]); return; }
     const current = currentMembers ?? resolved.members;
@@ -128,20 +121,19 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
       if (!s.accepted) continue;
       const tempStillPresent = current.some(m => m.agentId === s.record.inviteSignerAgentId);
       if (tempStillPresent) {
-        revokeMember(s.record.inviteSignerAgentId, khDocId).catch(err =>
+        revokeMember(s.record.inviteSignerAgentId, docId).catch(err =>
           console.warn('[AccessControl] Failed to auto-revoke temp invite member:', err)
         );
       }
     }
-  }, [khDocId]);
+  }, [docId]);
 
   const refresh = useCallback(async () => {
-    if (!khDocId) return;
     try {
       const [{ members: m, invites }, a, c] = await Promise.all([
-        getDocMembers(khDocId),
-        getMyAccess(khDocId),
-        getKnownContacts(khDocId),
+        getDocMembers(docId),
+        getMyAccess(docId),
+        getKnownContacts(docId),
       ]);
       // Normalize roles to lowercase to match SelectItem values
       const normalized = m.map((member: MemberInfo) => ({ ...member, role: member.role.toLowerCase() }));
@@ -157,17 +149,16 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
     } catch (err: any) {
       setError(err.message);
     }
-  }, [khDocId, checkInvites]);
+  }, [docId, checkInvites]);
 
   useEffect(() => {
-    if (open && khDocId) refresh();
-  }, [open, khDocId, refresh]);
+    if (open) refresh();
+  }, [open, refresh]);
 
   const handleChangeRole = async (agentId: string, newRole: string) => {
-    if (!khDocId) return;
     setLoading(true);
     try {
-      await changeRole(agentId, khDocId, newRole);
+      await changeRole(agentId, docId, newRole);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -177,11 +168,10 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   };
 
   const handleRevoke = async (agentId: string) => {
-    if (!khDocId) return;
     if (!confirm('Remove this member? Their keys will be rotated.')) return;
     setLoading(true);
     try {
-      await revokeMember(agentId, khDocId);
+      await revokeMember(agentId, docId);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -191,14 +181,13 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   };
 
   const handleAddOrInvite = async () => {
-    if (!khDocId) return;
     if (selectedContact === '__new__') {
       await handleGenerateInvite();
       return;
     }
     setLoading(true);
     try {
-      await addMember(selectedContact, khDocId, inviteRole);
+      await addMember(selectedContact, docId, inviteRole);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -208,14 +197,9 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   };
 
   const handleGenerateInvite = async () => {
-    if (!khDocId) return;
     setLoading(true);
     try {
-      const result = await generateInvite(khDocId, sharingGroupId || '', inviteRole, docId, docType ?? 'unknown');
-      // Persist updated groupId if it was recreated
-      if (result.groupId && result.groupId !== sharingGroupId) {
-        onGroupIdChange?.(result.groupId);
-      }
+      const result = await generateInvite(docId, inviteRole, docType ?? 'unknown');
       // Worker built the URL and stored the invite record
       await checkInvites();
       const copied = await shareOrCopy(result.inviteUrl);
@@ -231,14 +215,9 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
   };
 
   const handleDismissInvite = async (id: string) => {
-    if (!khDocId) return;
-    const { invites } = await dismissInvite(id, khDocId);
+    const { invites } = await dismissInvite(id, docId);
     await checkInvites(undefined, invites);
   };
-
-  if (!khDocId) {
-    return null;
-  }
 
   return (
     <>

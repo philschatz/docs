@@ -1,9 +1,9 @@
 import type { ComponentChildren } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { useWsStatus, getWorkerPeerId } from './automerge';
 import { peerColor, peerDisplayName } from './presence';
 import { AccessControl } from '../components/AccessControl';
-import { enableSharing, registerSharingGroup, registerDocMapping } from './keyhive-api';
+import { enableSharing } from './keyhive-api';
 import { useAccess } from './useAccess';
 import { getDocEntry } from '../doc-storage';
 
@@ -24,10 +24,8 @@ export function EditorTitleBar<P extends PeerLike>({
   showSourceLink = true,
   onToggleHistory,
   historyActive = false,
-  khDocId: initialKhDocId,
   docType,
   onSharingEnabled,
-  sharingGroupId,
   children,
 }: {
   icon: string;
@@ -42,35 +40,22 @@ export function EditorTitleBar<P extends PeerLike>({
   showSourceLink?: boolean;
   onToggleHistory?: () => void;
   historyActive?: boolean;
-  /** Keyhive document ID (base64). When set, shows the share/permissions button. */
-  khDocId?: string;
   /** Document type (Calendar/TaskList/DataGrid) — embedded in invite URL for correct redirect. */
   docType?: string;
-  /** Called when sharing is first enabled, with the new khDocId and groupId. */
-  onSharingEnabled?: (khDocId: string, groupId: string) => void;
-  /** Persisted sharing group ID (needed to restore after reload). */
-  sharingGroupId?: string;
+  /** Called when sharing is first enabled, with the new groupId. */
+  onSharingEnabled?: (groupId: string) => void;
   children?: ComponentChildren;
 }) {
   const connected = useWsStatus(docId);
-  const [khDocId, setKhDocId] = useState(initialKhDocId);
+  const encrypted = docId ? !!getDocEntry(docId)?.encrypted : false;
   const [enabling, setEnabling] = useState(false);
-  const { access } = useAccess(khDocId);
-
-  // Re-register persisted sharing group and doc mapping with the worker on mount
-  useEffect(() => {
-    if (initialKhDocId) {
-      registerSharingGroup(initialKhDocId, sharingGroupId || '').catch(() => {});
-      if (docId) registerDocMapping(docId, initialKhDocId);
-    }
-  }, [initialKhDocId, sharingGroupId, docId]);
+  const { access } = useAccess(encrypted ? docId : undefined);
 
   const handleEnableSharing = async () => {
     setEnabling(true);
     try {
-      const { khDocId: newId, groupId } = await enableSharing(docId!);
-      setKhDocId(newId);
-      onSharingEnabled?.(newId, groupId);
+      const { groupId } = await enableSharing(docId!);
+      onSharingEnabled?.(groupId);
     } catch (err: any) {
       console.error('Failed to enable sharing:', err);
     } finally {
@@ -132,16 +117,13 @@ export function EditorTitleBar<P extends PeerLike>({
         </span>
 
         {/* Sharing / access button (combined) */}
-        {khDocId && docId ? (
+        {encrypted && docId ? (
           <AccessControl
-            khDocId={khDocId}
             docId={docId}
             docType={docType}
-            sharingGroupId={sharingGroupId}
-            onGroupIdChange={(gid) => onSharingEnabled?.(khDocId!, gid)}
             access={access}
           />
-        ) : docId && getDocEntry(docId)?.encrypted && (
+        ) : docId && encrypted && (
           <button
             className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground"
             title="Enable sharing"

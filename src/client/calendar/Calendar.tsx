@@ -39,10 +39,10 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const history = useDocumentHistory(docId);
   const validationErrors = useDocumentValidation(docId);
-  const khDocId = getDocEntry(docId)?.khDocId;
-  const { access, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(khDocId);
+  const encrypted = !!getDocEntry(docId)?.encrypted;
+  const { access, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(encrypted ? docId : undefined);
   const canEdit = !readOnly && history.editable && accessCanEdit;
-  const noAccess = !!khDocId && accessLoaded && access === null;
+  const noAccess = encrypted && accessLoaded && access === null;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const eventsRef = useRef<Record<string, CalendarEvent>>({});
@@ -194,10 +194,8 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         peerTitle={(peer) => `${peerDisplayName(peer.peerId)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
-        khDocId={getDocEntry(docId)?.khDocId}
         docType="Calendar"
-        sharingGroupId={getDocEntry(docId)?.sharingGroupId}
-        onSharingEnabled={(khDocId, groupId) => updateDocCache(docId, { khDocId, sharingGroupId: groupId })}
+        onSharingEnabled={(groupId) => updateDocCache(docId, { sharingGroupId: groupId })}
       >
         <input
           type="color"

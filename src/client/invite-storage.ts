@@ -2,7 +2,7 @@ import { idbGet, idbSet } from './idb-storage';
 
 export interface InviteRecord {
   id: string;
-  khDocId: string;
+  docId: string;
   inviteUrl: string;
   role: string;
   createdAt: number;
@@ -22,9 +22,9 @@ async function saveAll(records: InviteRecord[]): Promise<void> {
   await idbSet(IDB_KEY, records);
 }
 
-export async function getInviteRecords(khDocId: string): Promise<InviteRecord[]> {
+export async function getInviteRecords(docId: string): Promise<InviteRecord[]> {
   const all = await loadAll();
-  return all.filter(r => r.khDocId === khDocId);
+  return all.filter(r => r.docId === docId);
 }
 
 export async function addInviteRecord(record: InviteRecord): Promise<void> {
@@ -42,13 +42,13 @@ export async function getAllInviteRecords(): Promise<InviteRecord[]> {
   return loadAll();
 }
 
-export async function removeInviteRecordsForDoc(khDocId: string): Promise<void> {
+export async function removeInviteRecordsForDoc(docId: string): Promise<void> {
   const all = await loadAll();
-  await saveAll(all.filter(r => r.khDocId !== khDocId));
+  await saveAll(all.filter(r => r.docId !== docId));
 }
 
-export async function pruneInvitesNotIn(knownKhDocIds: Set<string>): Promise<void> {
+export async function pruneInvitesNotIn(knownDocIds: Set<string>): Promise<void> {
   const all = await loadAll();
-  const filtered = all.filter(r => knownKhDocIds.has(r.khDocId));
+  const filtered = all.filter(r => knownDocIds.has(r.docId));
   if (filtered.length < all.length) await saveAll(filtered);
 }

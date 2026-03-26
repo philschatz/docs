@@ -55,7 +55,7 @@ export function InvitePage({ docId, docType, inviteKey }: InvitePageProps) {
       const { seed } = decodeInvitePayload(inviteKey);
 
       setStatus('Syncing keys from relay...');
-      const result = await claimInvite(Array.from(seed), docId);
+      await claimInvite(Array.from(seed), docId);
 
       setStatus('Adding document...');
       const entry = getDocEntry(docId);
@@ -63,7 +63,6 @@ export function InvitePage({ docId, docType, inviteKey }: InvitePageProps) {
       addDocId(docId, {
         ...entry,
         encrypted: true,
-        khDocId: result.khDocId,
         ...(resolvedType ? { type: resolvedType as any } : {}),
       });
 

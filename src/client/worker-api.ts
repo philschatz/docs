@@ -10,7 +10,7 @@ import type { ValidationError } from './automerge-worker';
 import type { PresenceState, PeerState } from '@automerge/automerge-repo';
 import type { InviteRecord } from './invite-storage';
 import { deepAssign } from '../shared/deep-assign';
-import { getDocEntry, getDocList, setDocListDispatch, applyDocListFromWorker } from './doc-storage';
+import { getDocEntry, setDocListDispatch, applyDocListFromWorker } from './doc-storage';
 import { setContactNamesDispatch, applyContactNamesFromWorker } from './contact-names';
 
 // Re-export for convenience
@@ -138,9 +138,6 @@ worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
       resolveRepoReady();
       break;
     case 'kh-ready':
-      for (const entry of getDocList()) {
-        if (entry.khDocId) registerDocMapping(entry.id, entry.khDocId);
-      }
       resolveKeyhiveReady();
       break;
     case 'kh-error':
@@ -297,8 +294,8 @@ export const HOME_SUMMARY_QUERY =
 
 // ── Document mutations ──────────────────────────────────────────────────────
 
-export function createDoc(initialJson: any, secure = true): Promise<{ docId: string; khDocId?: string }> {
-  return request<{ docId: string; khDocId?: string }>('create-doc', { initialJson, secure });
+export function createDoc(initialJson: any, secure = true): Promise<{ docId: string }> {
+  return request<{ docId: string }>('create-doc', { initialJson, secure });
 }
 
 /**
@@ -495,14 +492,14 @@ export function getKnownContacts(excludeDocId?: string): Promise<MemberInfo[]> {
   return khRequest('kh-get-known-contacts', { excludeDocId });
 }
 
-/** Get all members, roles, and invite records for a document. Each member has an `isMe` flag. */
-export function getDocMembers(khDocId: string): Promise<{ members: MemberInfo[]; invites: InviteRecord[] }> {
-  return khRequest('kh-get-doc-members', { khDocId });
+/** Get all members, roles, and invite records for a document. */
+export function getDocMembers(docId: string): Promise<{ members: MemberInfo[]; invites: InviteRecord[] }> {
+  return khRequest('kh-get-doc-members', { docId });
 }
 
 /** Get this device's access level for a document. */
-export function getMyAccess(khDocId: string): Promise<string | null> {
-  return khRequest('kh-get-my-access', { khDocId });
+export function getMyAccess(docId: string): Promise<string | null> {
+  return khRequest('kh-get-my-access', { docId });
 }
 
 /** List all devices linked to this user's identity group. */
@@ -531,35 +528,26 @@ export function changeRole(agentId: string, docId: string, newRole: string): Pro
 }
 
 /** Generate an invite link for a document. The worker builds the URL and stores the invite record. */
-export function generateInvite(docId: string, groupId: string, role: string, automergeDocId: string, docType: string): Promise<{ inviteKeyBytes: number[]; groupId: string; inviteSignerAgentId: string; inviteUrl: string }> {
-  return khRequest('kh-generate-invite', { docId, groupId, role, automergeDocId, docType });
+export function generateInvite(docId: string, role: string, docType: string): Promise<{ inviteKeyBytes: number[]; groupId: string; inviteSignerAgentId: string; inviteUrl: string }> {
+  return khRequest('kh-generate-invite', { docId, role, docType });
 }
 
 /** Dismiss (delete) an invite record by ID. Returns the remaining invites for the doc. */
-export function dismissInvite(inviteId: string, khDocId: string): Promise<{ invites: InviteRecord[] }> {
-  return khRequest('kh-dismiss-invite', { inviteId, khDocId });
+export function dismissInvite(inviteId: string, docId: string): Promise<{ invites: InviteRecord[] }> {
+  return khRequest('kh-dismiss-invite', { inviteId, docId });
 }
 
 /** Claim an invite by syncing keys from the relay using the invite seed. */
-export function claimInvite(inviteSeed: number[], automergeDocId: string): Promise<{ khDocId: string }> {
-  return khRequest('kh-claim-invite', { inviteSeed, automergeDocId });
+export function claimInvite(inviteSeed: number[], docId: string): Promise<void> {
+  return khRequest('kh-claim-invite', { inviteSeed, docId });
 }
 
-/** Enable sharing on a document by creating a keyhive Document. */
-export function enableSharing(automergeDocId: string): Promise<{ khDocId: string; groupId: string }> {
-  return khRequest('kh-enable-sharing', { automergeDocId });
+/** Enable sharing on a document. */
+export function enableSharing(docId: string): Promise<{ groupId: string }> {
+  return khRequest('kh-enable-sharing', { docId });
 }
 
 /** Register a previously-created sharing group so the worker can find it after reload. */
-export function registerSharingGroup(khDocId: string, groupId: string): Promise<void> {
-  return khRequest('kh-register-sharing-group', { khDocId, groupId });
-}
-
-/** Register an automerge→keyhive doc mapping for access enforcement. Fire-and-forget. */
-export function registerDocMapping(automergeDocId: string, khDocId: string): void {
-  try {
-    const msg = { type: 'kh-register-doc-mapping' as const, automergeDocId, khDocId };
-    console.log('[main] → send', msg.type, msg);
-    worker.postMessage(msg);
-  } catch { /* ignore if worker not ready */ }
+export function registerSharingGroup(docId: string): Promise<void> {
+  return khRequest('kh-register-sharing-group', { docId });
 }

@@ -47,7 +47,7 @@ function initialEntries(): DocEntry[] {
     loading: true,
     peers: [],
     encrypted: e.encrypted,
-    access: e.encrypted && e.khDocId ? getCachedAccess(e.khDocId) : undefined,
+    access: e.encrypted ? getCachedAccess(e.id) : undefined,
   }));
 }
 
@@ -115,8 +115,8 @@ export function Home({ path }: { path?: string }) {
     const fetchAccessForDocs = () => {
       for (const docId of docIds) {
         const entry = getDocList().find(e => e.id === docId);
-        if (entry?.encrypted && entry.khDocId) {
-          getMyAccess(entry.khDocId).then(access => {
+        if (entry?.encrypted) {
+          getMyAccess(docId).then(access => {
             setEntries(prev => prev.map(e =>
               e.documentId === docId ? { ...e, access: access?.toLowerCase() ?? null } : e
             ));
@@ -161,8 +161,8 @@ export function Home({ path }: { path?: string }) {
     const name = prompt('Calendar name:', 'Untitled');
     if (name === null) return;
     const resolvedName = name || 'Untitled';
-    const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: resolvedName, events: {} }, createSecure);
-    addDocId(docId, { type: 'Calendar', name: resolvedName, khDocId, encrypted: createSecure });
+    const { docId } = await createDoc({ '@type': 'Calendar', name: resolvedName, events: {} }, createSecure);
+    addDocId(docId, { type: 'Calendar', name: resolvedName, encrypted: createSecure });
     window.location.hash = viewPathForType('Calendar', docId);
   };
 
@@ -170,8 +170,8 @@ export function Home({ path }: { path?: string }) {
     const name = prompt('Task list name:', 'Untitled');
     if (name === null) return;
     const resolvedName = name || 'Untitled';
-    const { docId, khDocId } = await createDoc({ '@type': 'TaskList', name: resolvedName, tasks: {} }, createSecure);
-    addDocId(docId, { type: 'TaskList', name: resolvedName, khDocId, encrypted: createSecure });
+    const { docId } = await createDoc({ '@type': 'TaskList', name: resolvedName, tasks: {} }, createSecure);
+    addDocId(docId, { type: 'TaskList', name: resolvedName, encrypted: createSecure });
     window.location.hash = viewPathForType('TaskList', docId);
   };
 
@@ -183,7 +183,7 @@ export function Home({ path }: { path?: string }) {
     const sheetId = sid();
     const rows: Record<string, { index: number }> = {};
     for (let i = 1; i <= 10; i++) rows[sid()] = { index: i };
-    const { docId, khDocId } = await createDoc({
+    const { docId } = await createDoc({
       '@type': 'DataGrid',
       name: resolvedName,
       sheets: {
@@ -197,7 +197,7 @@ export function Home({ path }: { path?: string }) {
         },
       },
     }, createSecure);
-    addDocId(docId, { type: 'DataGrid', name: resolvedName, khDocId, encrypted: createSecure });
+    addDocId(docId, { type: 'DataGrid', name: resolvedName, encrypted: createSecure });
     window.location.hash = viewPathForType('DataGrid', docId);
   };
 
@@ -328,8 +328,8 @@ export function Home({ path }: { path?: string }) {
           columns: s.columns, rows: s.rows, cells: s.cells,
         };
       }
-      const { docId, khDocId } = await createDoc({ '@type': 'DataGrid', name, sheets }, createSecure);
-      addDocId(docId, { type: 'DataGrid', name, khDocId, encrypted: createSecure });
+      const { docId } = await createDoc({ '@type': 'DataGrid', name, sheets }, createSecure);
+      addDocId(docId, { type: 'DataGrid', name, encrypted: createSecure });
       alert(`/datagrids/${docId}`)
     } catch (err: any) {
       setError('Failed to import: ' + err.message);
@@ -356,10 +356,10 @@ export function Home({ path }: { path?: string }) {
       const data = JSON.parse(text);
       if (!data || typeof data !== 'object') throw new Error('Invalid JSON: expected an object');
       const name = data.name || file.name.replace(/\.json$/i, '') || 'Imported';
-      const { docId, khDocId } = await createDoc(data, createSecure);
+      const { docId } = await createDoc(data, createSecure);
       const type = (data['@type'] === 'Calendar' || data['@type'] === 'TaskList' || data['@type'] === 'DataGrid')
         ? data['@type'] as DocType : 'unknown';
-      addDocId(docId, { type, name, khDocId, encrypted: createSecure });
+      addDocId(docId, { type, name, encrypted: createSecure });
       setMessage(`Imported "${name}"`);
       setError('');
       reloadEntries();
@@ -381,8 +381,8 @@ export function Home({ path }: { path?: string }) {
       const calName = file.name.replace(/\.ics$/i, '') || 'Imported';
       const events: Record<string, any> = {};
       for (const { uid, event } of parsed) events[uid] = event;
-      const { docId, khDocId } = await createDoc({ '@type': 'Calendar', name: calName, events }, createSecure);
-      addDocId(docId, { type: 'Calendar', name: calName, khDocId, encrypted: createSecure });
+      const { docId } = await createDoc({ '@type': 'Calendar', name: calName, events }, createSecure);
+      addDocId(docId, { type: 'Calendar', name: calName, encrypted: createSecure });
       setMessage(`Imported ${parsed.length} event${parsed.length !== 1 ? 's' : ''} into "${calName}"`);
       setError('');
       reloadEntries();
