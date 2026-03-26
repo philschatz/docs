@@ -594,6 +594,26 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
 
       // Contact names already pushed before kh-ready above
 
+      // GC: self-revoke from keyhive docs no longer in our list
+      if (khOps) {
+        try {
+          const reachable = await khOps.kh.reachableDocs();
+          const myKhDocIds = new Set(docList.map(d => d.khDocId).filter(Boolean));
+          for (const summary of reachable) {
+            const khDocId = bytesToBase64(summary.doc.id.toBytes());
+            if (myKhDocIds.has(khDocId)) continue;
+            try {
+              await khOps.leaveDoc(khDocId);
+              console.log(`[worker] keyhive GC: left doc ${khDocId}`);
+            } catch (err: any) {
+              console.warn(`[worker] keyhive GC: failed to leave doc ${khDocId}:`, errMsg(err));
+            }
+          }
+        } catch (err: any) {
+          console.warn('[worker] keyhive GC failed:', errMsg(err));
+        }
+      }
+
       const primaryRepo = secureRepo ?? insecureRepo;
       console.log('[worker] init complete');
       (self as any).postMessage({ type: 'ready', peerId: primaryRepo.peerId } satisfies WorkerToMain);
@@ -933,6 +953,14 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (removedEntry?.khDocId) {
         const { removeInviteRecordsForDoc } = await import('./invite-storage');
         await removeInviteRecordsForDoc(removedEntry.khDocId);
+      }
+      // Self-revoke from keyhive ACL
+      if (removedEntry?.khDocId && khOps) {
+        try {
+          await khOps.leaveDoc(removedEntry.khDocId);
+        } catch (err: any) {
+          console.warn('[worker] leaveDoc failed on delete:', errMsg(err));
+        }
       }
       // Remember this doc was explicitly removed so auto-discovery doesn't re-add it
       const dismissed = (await idbGet<string[]>('dismissed-doc-ids')) ?? [];

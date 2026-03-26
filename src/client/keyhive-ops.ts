@@ -373,6 +373,19 @@ export class KeyhiveOps {
     return [...seen.values()];
   }
 
+  /** Self-revoke from a document's ACL. Fetches the doc fresh from keyhive. */
+  async leaveDoc(docId: string): Promise<void> {
+    const khDocIdObj = new this.bridge.DocumentId(base64ToBytes(docId));
+    const doc = await this.kh.getDocument(khDocIdObj);
+    if (!doc) return;
+    const me = await this.kh.individual;
+    const agentId = bytesToBase64(me.id.toBytes());
+    const agent = await this.findAgentByIdBytes(doc, agentId);
+    await this.kh.revokeMember(agent, true, doc.toMembered());
+    await this.fx.persist();
+    this.fx.syncKeyhive();
+  }
+
   /** Look up an Agent from docMemberCapabilities by matching Identifier bytes (base64). */
   private async findAgentByIdBytes(doc: any, agentIdB64: string): Promise<any> {
     const targetBytes = base64ToBytes(agentIdB64);
