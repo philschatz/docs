@@ -228,9 +228,16 @@ async function checkForNewKeyhiveDocs() {
     const dismissed = new Set((await idbGet<string[]>('dismissed-doc-ids')) ?? []);
     const knownIds = new Set(list.map(e => e.id));
     let changed = false;
+    let dismissedChanged = false;
 
     const addDoc = (amDocId: string, khDocIdObj: any): boolean => {
-      if (knownIds.has(amDocId) || dismissed.has(amDocId)) return false;
+      if (knownIds.has(amDocId)) return false;
+      if (dismissed.has(amDocId)) {
+        // Previously dismissed but re-invited — un-dismiss so the doc reappears
+        console.log(`[worker] checkForNewKeyhiveDocs: un-dismissing re-invited doc ${amDocId}`);
+        dismissed.delete(amDocId);
+        dismissedChanged = true;
+      }
       const khDocIdB64 = bytesToBase64(khDocIdObj.toBytes());
       console.log(`[worker] checkForNewKeyhiveDocs: discovered new doc ${amDocId} (kh=${khDocIdB64})`);
       khIntegration!.networkAdapter.registerDoc(amDocId, khDocIdObj);
@@ -264,6 +271,10 @@ async function checkForNewKeyhiveDocs() {
       } catch {
         // Not a keyhive-formatted docId — skip
       }
+    }
+
+    if (dismissedChanged) {
+      await idbSet('dismissed-doc-ids', [...dismissed]);
     }
 
     if (changed) {

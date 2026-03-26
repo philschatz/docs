@@ -96,7 +96,8 @@ export function Home({ path }: { path?: string }) {
   }, []);
 
   // Subscribe to doc summaries from the worker
-  const docIdKey = entries.map(e => e.documentId).join(',');
+  // Sort IDs so reordering entries doesn't trigger re-subscription
+  const docIdKey = entries.map(e => e.documentId).sort().join(',');
   useEffect(() => {
     const docIds = docIdKey ? docIdKey.split(',') : [];
     if (docIds.length === 0) return;
