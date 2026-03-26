@@ -439,6 +439,117 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         secureWs.onClose = () => { origSecureClose(); (self as any).postMessage({ type: 'ws-status', repo: 'secure', connected: false } satisfies WorkerToMain); };
 
         console.log('[worker] secure repo created, peerId:', khIntegration.peerId);
+
+        // --- Debug: dump keyhive archive contents ---
+        try {
+          const kh = khIntegration.keyhive;
+          const me = await kh.individual;
+          const stats = await kh.stats();
+          const pendingHashes = await kh.pendingEventHashes();
+          const reachable = await kh.reachableDocs();
+
+          // Contact card
+          const card = await kh.contactCard();
+          let existingCard: any = null;
+          try { existingCard = await kh.getExistingContactCard(); } catch {}
+
+          // Public agent event counts (used by sync protocol)
+          let publicEventInfo: any = null;
+          try {
+            const { Identifier: Id } = await import('@keyhive/keyhive/slim');
+            const pubAgent = await kh.getAgent(Id.publicId());
+            if (pubAgent) {
+              const hashes = await kh.eventHashesForAgent(pubAgent);
+              const events = await kh.eventsForAgent(pubAgent);
+              publicEventInfo = {
+                eventHashesForAgent: hashes.length,
+                eventsForAgent: events.size,
+                consistent: hashes.length === events.size,
+              };
+            }
+          } catch {}
+
+          // Per-doc details
+          const docs: any[] = [];
+          for (const summary of reachable) {
+            const doc = summary.doc;
+            const access = summary.access;
+            const members: any[] = [];
+            try {
+              const caps = await kh.docMemberCapabilities(doc.doc_id);
+              for (const m of caps) {
+                members.push({
+                  who: m.who.toString(),
+                  agentId: bytesToBase64(m.who.id.toBytes()),
+                  can: m.can.toString(),
+                  isIndividual: m.who.isIndividual(),
+                  isGroup: m.who.isGroup(),
+                });
+              }
+            } catch {}
+
+            // My access for this doc
+            let myAccess: string | null = null;
+            try {
+              const { Identifier: Id } = await import('@keyhive/keyhive/slim');
+              const myId = new Id(kh.id.bytes);
+              const a = await kh.accessForDoc(myId, doc.doc_id);
+              myAccess = a ? a.toString() : null;
+            } catch {}
+
+            docs.push({
+              docId: bytesToBase64(doc.id.toBytes()),
+              summaryAccess: access.toString(),
+              myAccess,
+              memberCount: members.length,
+              members,
+            });
+          }
+
+          // Pending hashes detail
+          const pendingCount = pendingHashes ? Array.from(pendingHashes.keys()).length : 0;
+
+          // Archive size
+          const archive = await kh.toArchive();
+          const archiveBytes = archive.toBytes();
+
+          // Storage stats
+          const storage = khIntegration.keyhiveStorage;
+          let storedArchiveCount = 0;
+          let storedEventCount = 0;
+          try {
+            const archiveChunks = await (storage as any).storage.loadRange(['keyhive', 'archives']);
+            storedArchiveCount = archiveChunks.length;
+            const eventChunks = await (storage as any).storage.loadRange(['keyhive', 'events']);
+            storedEventCount = eventChunks.length;
+          } catch {}
+
+          console.log('[worker] === KEYHIVE ARCHIVE DUMP ===');
+          console.log('[worker] identity:', {
+            idString: String(kh.idString),
+            agentId: bytesToBase64(me.id.toBytes()),
+            contactCardId: bytesToBase64(card.id.toBytes()),
+            existingCardId: existingCard ? bytesToBase64(existingCard.id.toBytes()) : null,
+            cardIdMatch: existingCard ? bytesToBase64(card.id.toBytes()) === bytesToBase64(existingCard.id.toBytes()) : 'no existing card',
+          });
+          console.log('[worker] stats:', {
+            totalOps: Number(stats.totalOps),
+            archiveSize: archiveBytes.length,
+            pendingEventHashes: pendingCount,
+          });
+          console.log('[worker] storage:', {
+            storedArchives: storedArchiveCount,
+            storedEvents: storedEventCount,
+          });
+          if (publicEventInfo) {
+            console.log('[worker] publicAgent events:', publicEventInfo);
+          }
+          console.log('[worker] reachableDocs (' + docs.length + '):', JSON.stringify(docs, null, 2));
+          console.log('[worker] === END KEYHIVE DUMP ===');
+        } catch (dumpErr) {
+          console.warn('[worker] keyhive dump failed:', dumpErr);
+        }
+
         // Push contact names BEFORE kh-ready so code awaiting keyhiveReady sees them
         {
           const { idbGet: idbGetNames } = await import('./idb-storage');
