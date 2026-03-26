@@ -46,7 +46,7 @@ export function EditorTitleBar<P extends PeerLike>({
   onSharingEnabled?: (groupId: string) => void;
   children?: ComponentChildren;
 }) {
-  const connected = useWsStatus(docId);
+  const connected = useWsStatus(docId!);
   const encrypted = docId ? !!getDocEntry(docId)?.encrypted : false;
   const [enabling, setEnabling] = useState(false);
   const { access } = useAccess(encrypted ? docId : undefined);

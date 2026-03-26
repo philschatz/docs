@@ -259,8 +259,8 @@ export function useConnectionStatus(): boolean {
  * Returns WebSocket connection status for a specific document's repo.
  * Unlike useConnectionStatus (which tracks peers), this tracks the raw WS open/close state.
  */
-export function useWsStatus(docId: string | undefined): boolean {
-  const encrypted = docId ? getDocEntry(docId)?.encrypted : undefined;
+export function useWsStatus(docId: string): boolean {
+  const encrypted = getDocEntry(docId)?.encrypted;
   const [connected, setConnected] = useState(() => encrypted ? wsSecureConnected : wsInsecureConnected);
 
   useEffect(() => {
@@ -488,7 +488,7 @@ export function receiveContactCard(cardJson: string, opts?: { isDevice?: boolean
 }
 
 /** Get known contacts across all documents, excluding members of a specific doc. */
-export function getKnownContacts(excludeDocId?: string): Promise<MemberInfo[]> {
+export function getKnownContacts(excludeDocId: string): Promise<MemberInfo[]> {
   return khRequest('kh-get-known-contacts', { excludeDocId });
 }
 
