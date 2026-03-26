@@ -17,9 +17,9 @@ export type MainToWorker =
   | { type: 'debug-get-version-patches'; id: number; docId: string; version: number }
   | { type: 'restore-doc-to-heads'; id: number; docId: string; heads: string[] }
   | { type: 'restore-doc-to-version'; id: number; docId: string; version: number }
-  | { type: 'presence-subscribe'; docId: string }
-  | { type: 'presence-unsubscribe'; docId: string }
-  | { type: 'presence-set'; docId: string; state: any }
+  | { type: 'subscribe-presence'; docId: string }
+  | { type: 'unsubscribe-presence'; docId: string }
+  | { type: 'set-presence'; docId: string; state: any }
   // Doc list mutations (IDB-backed)
   | { type: 'add-doc-to-list'; docId: string; [key: string]: any }
   | { type: 'remove-doc-from-list'; docId: string }
@@ -45,8 +45,8 @@ export type MainToWorker =
   | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; automergeDocId: string }
   | { type: 'kh-dismiss-invite'; id: number; inviteId: string; khDocId: string }
   | { type: 'open-doc'; id: number; docId: string; secure?: boolean }
-  | { type: 'validate-subscribe'; docId: string }
-  | { type: 'validate-unsubscribe'; docId: string };
+  | { type: 'subscribe-validation'; docId: string }
+  | { type: 'unsubscribe-validation'; docId: string };
 
 export type ValidationError = { path: (string | number)[]; message: string; kind?: 'schema' | 'dependency' | 'warning' };
 
@@ -61,16 +61,14 @@ export type WorkerToMain =
   // New worker-owned doc API responses
   | { type: 'result'; id: number; result?: any; error?: string }
   | { type: 'sub-result'; subId: number; result: any; heads: string[]; lastModified?: number; error?: string }
-  | { type: 'presence-update'; docId: string; peers: Record<string, any> }
+  | { type: 'update-presence'; docId: string; peers: Record<string, any> }
   // Document loading progress
   | { type: 'open-doc-progress'; id: number; pct: number; message: string }
   // Validation
-  | { type: 'validation-result'; docId: string; errors: ValidationError[] }
+  | { type: 'update-validation'; docId: string; errors: ValidationError[] }
   // Doc list / contact names push
   | { type: 'doc-list-updated'; list: Array<{ id: string; type?: string; name?: string; encrypted?: boolean; khDocId?: string; sharingGroupId?: string }> }
   | { type: 'contact-names-updated'; names: Record<string, string> }
-  // Keyhive responses
-  | { type: 'kh-result'; id: number; result?: any; error?: string }
   // Keyhive state changed (membership/access may have changed)
   | { type: 'kh-state-changed' };
 
@@ -206,7 +204,7 @@ async function pushToSubscriptions(docId: string) {
 function pushValidation(docId: string, doc: any) {
   const allErrors = validateDocument(doc);
   const errors = allErrors.slice(0, 100);
-  (self as any).postMessage({ type: 'validation-result', docId, errors } satisfies WorkerToMain);
+  (self as any).postMessage({ type: 'update-validation', docId, errors } satisfies WorkerToMain);
 }
 
 /**
@@ -771,7 +769,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'validate-subscribe') {
+  if (msg.type === 'subscribe-validation') {
     try {
       const handle = await getOrLoadHandle(msg.docId);
       const entry = getOrCreateEntry(msg.docId, handle);
@@ -784,11 +782,11 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       // Push immediately
       await pushToSubscriptions(msg.docId);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'validation-result', docId: msg.docId, errors: [] } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'update-validation', docId: msg.docId, errors: [] } satisfies WorkerToMain);
     }
   }
 
-  if (msg.type === 'validate-unsubscribe') {
+  if (msg.type === 'unsubscribe-validation') {
     const entry = docRegistry.get(msg.docId);
     if (entry) entry.validationSubscribed = false;
   }
@@ -889,7 +887,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'presence-subscribe') {
+  if (msg.type === 'subscribe-presence') {
     try {
       const handle = await getOrLoadHandle(msg.docId);
       const entry = getOrCreateEntry(msg.docId, handle);
@@ -898,7 +896,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         presence.start({ initialState: { viewing: true, focusedField: null }, heartbeatMs: 5000, peerTtlMs: 15000 });
         const sendPresence = () => {
           const peers = { ...presence.getPeerStates().value };
-          (self as any).postMessage({ type: 'presence-update', docId: msg.docId, peers } satisfies WorkerToMain);
+          (self as any).postMessage({ type: 'update-presence', docId: msg.docId, peers } satisfies WorkerToMain);
         };
         presence.on('update', sendPresence);
         presence.on('goodbye', sendPresence);
@@ -910,7 +908,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'presence-unsubscribe') {
+  if (msg.type === 'unsubscribe-presence') {
     const entry = docRegistry.get(msg.docId);
     if (entry?.presence) {
       entry.presence.stop();
@@ -918,7 +916,7 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'presence-set') {
+  if (msg.type === 'set-presence') {
     const entry = docRegistry.get(msg.docId);
     if (entry?.presence) {
       for (const [key, value] of Object.entries(msg.state)) {
@@ -1021,9 +1019,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const identity = await khOps.getIdentity();
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: identity } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: identity } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1031,9 +1029,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.getContactCard();
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1049,9 +1047,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           await idbSet('linked-devices', devices);
         }
       }
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1061,9 +1059,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const members = await khOps.getDocMembers(msg.khDocId);
       const { getInviteRecords } = await import('./invite-storage');
       const invites = await getInviteRecords(msg.khDocId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { members, invites } } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: { members, invites } } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1071,9 +1069,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.getMyAccess(msg.khDocId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1084,9 +1082,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const contactNames = (await idbGet<Record<string, string>>('contact-names')) ?? {};
       const contactAgentIds = Object.keys(contactNames);
       const result = await khOps.getKnownContacts(msg.excludeDocId, contactAgentIds);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1102,9 +1100,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       for (const id of linkedIds) {
         devices.push({ agentId: id, role: 'linked', isMe: false });
       }
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: devices } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: devices } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1115,9 +1113,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const devices = (await idbGet<string[]>('linked-devices')) ?? [];
       const updated = devices.filter(id => id !== msg.agentId);
       await idbSet('linked-devices', updated);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: undefined } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: undefined } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1160,9 +1158,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
           (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
         }
       } catch { /* non-critical */ }
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1187,9 +1185,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
         baselineAgentIds: members.map((m: any) => m.agentId),
       });
 
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { ...result, inviteUrl } } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: { ...result, inviteUrl } } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1197,9 +1195,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.addMember(msg.agentId, msg.docId, msg.role);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1207,9 +1205,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.revokeMember(msg.agentId, msg.docId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1217,9 +1215,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.changeRole(msg.agentId, msg.docId, msg.newRole);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1227,9 +1225,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     try {
       if (!khOps) throw new Error('Keyhive not available');
       const result = await khOps.registerSharingGroup(msg.khDocId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1275,10 +1273,10 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       }
 
       const result = await khOps.claimInviteWithKeyhive(inviteKh, msg.automergeDocId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
       console.error('[kh-claim-invite] failed:', err);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 
@@ -1287,9 +1285,9 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       const { removeInviteRecord, getInviteRecords } = await import('./invite-storage');
       await removeInviteRecord(msg.inviteId);
       const invites = await getInviteRecords(msg.khDocId);
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, result: { invites } } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, result: { invites } } satisfies WorkerToMain);
     } catch (err: any) {
-      (self as any).postMessage({ type: 'kh-result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
+      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
     }
   }
 

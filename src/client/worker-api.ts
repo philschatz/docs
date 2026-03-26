@@ -1,95 +1,299 @@
 /**
- * Typed API for communicating with the automerge worker.
- * Query is the only read path — the full document is never sent to the browser.
+ * Single owner of the automerge web worker lifecycle.
+ * Provides typed APIs for document operations and keyhive operations.
+ * The full document is never sent to the main thread — query is the only read path.
  */
 
-import { workerReady, _worker, registerWorkerMessageHandler } from './shared/automerge';
-import type { PresenceState } from './shared/presence';
-import type { PeerState } from './shared/automerge';
+import { useState, useEffect, useRef } from 'preact/hooks';
+import type { WorkerToMain } from './automerge-worker';
 import type { ValidationError } from './automerge-worker';
+import type { PresenceState, PeerState } from '@automerge/automerge-repo';
+import type { InviteRecord } from './invite-storage';
 import { deepAssign } from '../shared/deep-assign';
+import { getDocEntry, getDocList, setDocListDispatch, applyDocListFromWorker } from './doc-storage';
+import { setContactNamesDispatch, applyContactNamesFromWorker } from './contact-names';
+
+// Re-export for convenience
+export { deepAssign };
+export type { ValidationError };
 
 // Functions that the worker provides its own copy of. Callers pass the real ref;
 // updateDoc detects it by identity and sends a marker the worker substitutes.
 const WORKER_FNS = new Map<unknown, string>([[deepAssign, 'deepAssign']]);
 
-// Re-export for convenience
-export { workerReady, deepAssign };
+// ── Worker setup ────────────────────────────────────────────────────────────
 
-// ── jq filter constants ─────────────────────────────────────────────────────
+const worker = new Worker(
+  new URL('./automerge-worker.ts', import.meta.url),
+  { type: 'module' },
+);
 
-export const HOME_SUMMARY_QUERY =
-  '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), cellCount: (if .sheets then [.sheets[].cells // {} | length] | add else 0 end) }';
+// Wire up dispatch hooks (avoids circular imports with doc-storage / contact-names)
+setDocListDispatch((msgType, docId, metadata) => {
+  const msg = { type: msgType, docId, metadata };
+  console.log('[main] → send', msg.type, msg);
+  worker.postMessage(msg);
+});
+setContactNamesDispatch((type, agentId, name) => {
+  const msg = { type, agentId, ...(name !== undefined ? { name } : {}) };
+  console.log('[main] → send', msg.type, msg);
+  worker.postMessage(msg);
+});
 
-// ── Request/Response plumbing ───────────────────────────────────────────────
+const initMsg = {
+  type: 'init' as const,
+  appBaseUrl: window.location.origin + window.location.pathname,
+  enableInsecureRepo: localStorage.getItem('showUnencrypted') !== 'false',
+};
+console.log('[main] → send', initMsg.type, initMsg);
+worker.postMessage(initMsg);
 
-let idCounter = 0;
-const pendingRequests = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+// ── Ready promises ──────────────────────────────────────────────────────────
 
-// Subscription callbacks: subId → callback
+let resolveRepoReady: () => void;
+export const workerReady = new Promise<void>(r => { resolveRepoReady = r; });
+
+let resolveKeyhiveReady!: () => void;
+let rejectKeyhiveReady!: (err: Error) => void;
+export const keyhiveReady = new Promise<void>((resolve, reject) => { resolveKeyhiveReady = resolve; rejectKeyhiveReady = reject; });
+keyhiveReady.catch(() => {}); // prevent unhandled rejection — callers handle the error
+
+// ── Worker peer ID ──────────────────────────────────────────────────────────
+
+let _workerPeerId = '';
+export function getWorkerPeerId(): string { return _workerPeerId; }
+
+// ── Connection status ───────────────────────────────────────────────────────
+
+type ConnectionListener = (connected: boolean) => void;
+const connectionListeners = new Set<ConnectionListener>();
+let workerPeerCount = 0;
+let workerPeers: string[] = [];
+
+type WsStatusListener = (repo: 'secure' | 'insecure', connected: boolean) => void;
+const wsStatusListeners = new Set<WsStatusListener>();
+let wsSecureConnected = false;
+let wsInsecureConnected = false;
+
+type PeerListListener = (peers: string[]) => void;
+const peerListListeners = new Set<PeerListListener>();
+
+// ── Request/response plumbing ────────────────────────────────────────────────
+
+let nextId = 0;
+const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+
 const subscriptionCallbacks = new Map<number, (result: any, heads: string[], lastModified?: number) => void>();
-// Presence callbacks: docId → callback
 const presenceCallbacks = new Map<string, (peers: Record<string, PeerState<PresenceState>>) => void>();
-// Validation callbacks: docId → callback
 const validationCallbacks = new Map<string, (errors: ValidationError[]) => void>();
-// Open-doc progress callbacks: request id → callback
 const openDocProgressCallbacks = new Map<number, (pct: number, message: string) => void>();
 
-let subIdCounter = 0;
-
-// Register our handler with the worker message router in automerge.ts
-registerWorkerMessageHandler((msg) => handleWorkerApiMessage(msg));
-
-/** Routes worker messages for the worker-api (sub-result, result, presence-update). */
-function handleWorkerApiMessage(msg: any): boolean {
-  if (msg.type === 'sub-result') {
-    const cb = subscriptionCallbacks.get(msg.subId);
-    if (cb) {
-      if (msg.error) console.warn('[worker-api] sub-result error subId=%d:', msg.subId, msg.error);
-      else cb(msg.result, msg.heads, msg.lastModified);
-    }
-    return true;
-  }
-  if (msg.type === 'result') {
-    const p = pendingRequests.get(msg.id);
-    if (p) {
-      pendingRequests.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error));
-      else p.resolve(msg.result);
-    }
-    return true;
-  }
-  if (msg.type === 'presence-update') {
-    const cb = presenceCallbacks.get(msg.docId);
-    if (cb) cb(msg.peers);
-    return true;
-  }
-  if (msg.type === 'open-doc-progress') {
-    const cb = openDocProgressCallbacks.get(msg.id);
-    if (cb) cb(msg.pct, msg.message);
-    return true;
-  }
-  if (msg.type === 'validation-result') {
-    const cb = validationCallbacks.get(msg.docId);
-    if (cb) cb(msg.errors);
-    return true;
-  }
-  return false;
-}
+let nextSubId = 0;
 
 function request<T>(type: string, payload: Record<string, any> = {}): Promise<T> {
   return workerReady.then(() => {
-    const id = ++idCounter;
+    const id = ++nextId;
     return new Promise<T>((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject });
-      _worker().postMessage({ type, id, ...payload });
+      pending.set(id, { resolve, reject });
+      const msg = { type, id, ...payload };
+      console.log('[main] → send', msg.type, msg);
+      worker.postMessage(msg);
     });
   });
 }
 
 function fire(type: string, payload: Record<string, any> = {}): void {
-  workerReady.then(() => _worker().postMessage({ type, ...payload }));
+  workerReady.then(() => {
+    const msg = { type, ...payload };
+    console.log('[main] → send', msg.type, msg);
+    worker.postMessage(msg);
+  });
 }
+
+/** Keyhive requests gate on keyhiveReady (which implies workerReady). */
+function khRequest<T>(type: string, payload: Record<string, any> = {}): Promise<T> {
+  return keyhiveReady.then(() => request<T>(type, payload));
+}
+
+// ── Keyhive state change notifications ──────────────────────────────────────
+
+const stateChangeListeners = new Set<() => void>();
+
+/** Subscribe to keyhive state changes (membership/access may have changed). */
+export function onKeyhiveStateChanged(fn: () => void): () => void {
+  stateChangeListeners.add(fn);
+  return () => { stateChangeListeners.delete(fn); };
+}
+
+// ── Worker message router ───────────────────────────────────────────────────
+
+worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
+  const msg = e.data;
+  console.log('[main] ← recv', msg.type, msg);
+
+  switch (msg.type) {
+    // --- Lifecycle ---
+    case 'ready':
+      _workerPeerId = msg.peerId;
+      resolveRepoReady();
+      break;
+    case 'kh-ready':
+      for (const entry of getDocList()) {
+        if (entry.khDocId) registerDocMapping(entry.id, entry.khDocId);
+      }
+      resolveKeyhiveReady();
+      break;
+    case 'kh-error':
+      console.error('Keyhive init failed:', msg.message);
+      rejectKeyhiveReady(new Error(msg.message));
+      break;
+    case 'error':
+      console.error('Automerge worker error:', msg.message);
+      break;
+
+    // --- Connectivity ---
+    case 'peer-connected':
+    case 'peer-disconnected':
+      workerPeerCount = msg.peerCount;
+      workerPeers = msg.peers;
+      for (const fn of connectionListeners) fn(workerPeerCount > 0);
+      for (const fn of peerListListeners) fn(workerPeers);
+      break;
+    case 'ws-status':
+      if (msg.repo === 'secure') wsSecureConnected = msg.connected;
+      else wsInsecureConnected = msg.connected;
+      for (const fn of wsStatusListeners) fn(msg.repo, msg.connected);
+      break;
+
+    // --- Doc storage / contact names ---
+    case 'doc-list-updated':
+      applyDocListFromWorker(msg.list as any);
+      break;
+    case 'contact-names-updated':
+      applyContactNamesFromWorker(msg.names);
+      break;
+
+    // --- Keyhive notifications ---
+    case 'kh-state-changed':
+      for (const fn of stateChangeListeners) fn();
+      break;
+
+    // --- Request/response results (doc + keyhive share the same pending map) ---
+    case 'result': {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error));
+        else p.resolve(msg.result);
+      }
+      break;
+    }
+    case 'sub-result': {
+      const cb = subscriptionCallbacks.get(msg.subId);
+      if (cb) {
+        if (msg.error) console.warn('[worker-api] sub-result error subId=%d:', msg.subId, msg.error);
+        else cb(msg.result, msg.heads, msg.lastModified);
+      }
+      break;
+    }
+    case 'update-presence': {
+      const cb = presenceCallbacks.get(msg.docId);
+      if (cb) cb(msg.peers);
+      break;
+    }
+    case 'open-doc-progress': {
+      const cb = openDocProgressCallbacks.get(msg.id);
+      if (cb) cb(msg.pct, msg.message);
+      break;
+    }
+    case 'update-validation': {
+      const cb = validationCallbacks.get(msg.docId);
+      if (cb) cb(msg.errors);
+      break;
+    }
+  }
+};
+
+worker.onerror = (e) => {
+  console.error('Automerge worker failed to load:', e.message);
+};
+
+// ── Connection status hooks ─────────────────────────────────────────────────
+
+/**
+ * Returns true when the worker repo has at least one connected peer (i.e. the server).
+ * Disconnection is debounced by 6 s (> the 5 s retry interval in the WS adapter)
+ * so brief disconnect/reconnect cycles don't flash the indicator red.
+ */
+export function useConnectionStatus(): boolean {
+  const [connected, setConnected] = useState(() => workerPeerCount > 0);
+  const disconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const listener: ConnectionListener = (isConnected) => {
+      if (isConnected) {
+        if (disconnectTimer.current !== null) {
+          clearTimeout(disconnectTimer.current);
+          disconnectTimer.current = null;
+        }
+        setConnected(true);
+      } else {
+        if (disconnectTimer.current !== null) return;
+        disconnectTimer.current = setTimeout(() => {
+          disconnectTimer.current = null;
+          setConnected(workerPeerCount > 0);
+        }, 6000);
+      }
+    };
+    connectionListeners.add(listener);
+    return () => {
+      connectionListeners.delete(listener);
+      if (disconnectTimer.current !== null) {
+        clearTimeout(disconnectTimer.current);
+        disconnectTimer.current = null;
+      }
+    };
+  }, []);
+
+  return connected;
+}
+
+/**
+ * Returns WebSocket connection status for a specific document's repo.
+ * Unlike useConnectionStatus (which tracks peers), this tracks the raw WS open/close state.
+ */
+export function useWsStatus(docId: string | undefined): boolean {
+  const encrypted = docId ? getDocEntry(docId)?.encrypted : undefined;
+  const [connected, setConnected] = useState(() => encrypted ? wsSecureConnected : wsInsecureConnected);
+
+  useEffect(() => {
+    const listener: WsStatusListener = (repo, isConnected) => {
+      const relevant = encrypted ? repo === 'secure' : repo === 'insecure';
+      if (relevant) setConnected(isConnected);
+    };
+    wsStatusListeners.add(listener);
+    return () => { wsStatusListeners.delete(listener); };
+  }, [encrypted]);
+
+  return connected;
+}
+
+export function usePeerList(): string[] {
+  const [peers, setPeers] = useState(() => workerPeers);
+
+  useEffect(() => {
+    const listener: PeerListListener = (p) => setPeers(p);
+    peerListListeners.add(listener);
+    return () => { peerListListeners.delete(listener); };
+  }, []);
+
+  return peers;
+}
+
+// ── jq filter constants ─────────────────────────────────────────────────────
+
+export const HOME_SUMMARY_QUERY =
+  '{ type: .["@type"], name: (.name // ""), eventCount: (if .events then (.events | length) else 0 end), taskCount: (if .tasks then (.tasks | length) else 0 end), cellCount: (if .sheets then [.sheets[].cells // {} | length] | add else 0 end) }';
 
 // ── Document mutations ──────────────────────────────────────────────────────
 
@@ -107,14 +311,16 @@ export function openDoc(
 ): Promise<{ docId: string; secure?: boolean }> {
   const { secure, onProgress } = opts ?? {};
   return workerReady.then(() => {
-    const id = ++idCounter;
+    const id = ++nextId;
     if (onProgress) openDocProgressCallbacks.set(id, onProgress);
     return new Promise<{ docId: string; secure?: boolean }>((resolve, reject) => {
-      pendingRequests.set(id, {
+      pending.set(id, {
         resolve: (v) => { openDocProgressCallbacks.delete(id); resolve(v); },
         reject: (e) => { openDocProgressCallbacks.delete(id); reject(e); },
       });
-      _worker().postMessage({ type: 'open-doc', id, docId, secure });
+      const msg = { type: 'open-doc' as const, id, docId, secure };
+      console.log('[main] → send', msg.type, msg);
+      worker.postMessage(msg);
     });
   });
 }
@@ -153,7 +359,7 @@ export function subscribeQuery(
   filter: string,
   onResult: (result: any, heads: string[], lastModified?: number) => void,
 ): () => void {
-  const subId = ++subIdCounter;
+  const subId = ++nextSubId;
   subscriptionCallbacks.set(subId, onResult);
   fire('subscribe-query', { subId, docId, filter });
   return () => {
@@ -162,9 +368,7 @@ export function subscribeQuery(
   };
 }
 
-// ── Validation subscriptions ─────────────────────────────────────────────────
-
-export type { ValidationError };
+// ── Validation subscriptions ────────────────────────────────────────────────
 
 /**
  * Subscribe to validation results for a document.
@@ -176,10 +380,10 @@ export function subscribeValidation(
   onResult: (errors: ValidationError[]) => void,
 ): () => void {
   validationCallbacks.set(docId, onResult);
-  fire('validate-subscribe', { docId });
+  fire('subscribe-validation', { docId });
   return () => {
     validationCallbacks.delete(docId);
-    fire('validate-unsubscribe', { docId });
+    fire('unsubscribe-validation', { docId });
   };
 }
 
@@ -191,10 +395,12 @@ export function queryDoc(
   filter: string,
 ): Promise<{ result: any; heads: string[] }> {
   return workerReady.then(() => {
-    const id = ++idCounter;
+    const id = ++nextId;
     return new Promise((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject });
-      _worker().postMessage({ type: 'query', id, docId, filter });
+      pending.set(id, { resolve, reject });
+      const msg = { type: 'query' as const, id, docId, filter };
+      console.log('[main] → send', msg.type, msg);
+      worker.postMessage(msg);
     });
   });
 }
@@ -233,13 +439,127 @@ export function subscribePresence(
   onUpdate: (peers: Record<string, PeerState<PresenceState>>) => void,
 ): () => void {
   presenceCallbacks.set(docId, onUpdate);
-  fire('presence-subscribe', { docId });
+  fire('subscribe-presence', { docId });
   return () => {
     presenceCallbacks.delete(docId);
-    fire('presence-unsubscribe', { docId });
+    fire('unsubscribe-presence', { docId });
   };
 }
 
 export function setPresence(docId: string, state: Partial<PresenceState>): void {
-  fire('presence-set', { docId, state });
+  fire('set-presence', { docId, state });
+}
+
+// ── Keyhive types ───────────────────────────────────────────────────────────
+
+export interface DeviceInfo {
+  agentId: string;
+  role: string;
+  isMe?: boolean;
+}
+
+export interface IdentityInfo {
+  deviceId: string;
+  agentId: string;
+  devices: DeviceInfo[];
+}
+
+export interface MemberInfo {
+  agentId: string;
+  displayId: string;
+  role: string;
+  isIndividual: boolean;
+  isGroup: boolean;
+  isMe: boolean;
+}
+
+// ── Keyhive API ─────────────────────────────────────────────────────────────
+
+/** Get this device's identity and linked devices. */
+export function getIdentity(): Promise<IdentityInfo> {
+  return khRequest('kh-get-identity');
+}
+
+/** Generate a contact card (JSON string) for sharing with others. */
+export function getContactCard(): Promise<string> {
+  return khRequest('kh-get-contact-card');
+}
+
+/** Receive a contact card from another device/user. Returns the agent ID. */
+export function receiveContactCard(cardJson: string, opts?: { isDevice?: boolean }): Promise<{ agentId: string; isOwnCard: boolean }> {
+  return khRequest('kh-receive-contact-card', { cardJson, isDevice: opts?.isDevice });
+}
+
+/** Get known contacts across all documents, excluding members of a specific doc. */
+export function getKnownContacts(excludeDocId?: string): Promise<MemberInfo[]> {
+  return khRequest('kh-get-known-contacts', { excludeDocId });
+}
+
+/** Get all members, roles, and invite records for a document. Each member has an `isMe` flag. */
+export function getDocMembers(khDocId: string): Promise<{ members: MemberInfo[]; invites: InviteRecord[] }> {
+  return khRequest('kh-get-doc-members', { khDocId });
+}
+
+/** Get this device's access level for a document. */
+export function getMyAccess(khDocId: string): Promise<string | null> {
+  return khRequest('kh-get-my-access', { khDocId });
+}
+
+/** List all devices linked to this user's identity group. */
+export function listDevices(): Promise<DeviceInfo[]> {
+  return khRequest('kh-list-devices');
+}
+
+/** Remove a linked device by agent ID. */
+export function removeDevice(agentId: string): Promise<void> {
+  return khRequest('kh-remove-device', { agentId });
+}
+
+/** Add a member to a document with a specific role. */
+export function addMember(agentId: string, docId: string, role: string): Promise<void> {
+  return khRequest('kh-add-member', { agentId, docId, role });
+}
+
+/** Revoke a member from a document (triggers key rotation). */
+export function revokeMember(agentId: string, docId: string): Promise<void> {
+  return khRequest('kh-revoke-member', { agentId, docId });
+}
+
+/** Change a member's role (revoke + re-add, triggers key rotation). */
+export function changeRole(agentId: string, docId: string, newRole: string): Promise<void> {
+  return khRequest('kh-change-role', { agentId, docId, newRole });
+}
+
+/** Generate an invite link for a document. The worker builds the URL and stores the invite record. */
+export function generateInvite(docId: string, groupId: string, role: string, automergeDocId: string, docType: string): Promise<{ inviteKeyBytes: number[]; groupId: string; inviteSignerAgentId: string; inviteUrl: string }> {
+  return khRequest('kh-generate-invite', { docId, groupId, role, automergeDocId, docType });
+}
+
+/** Dismiss (delete) an invite record by ID. Returns the remaining invites for the doc. */
+export function dismissInvite(inviteId: string, khDocId: string): Promise<{ invites: InviteRecord[] }> {
+  return khRequest('kh-dismiss-invite', { inviteId, khDocId });
+}
+
+/** Claim an invite by syncing keys from the relay using the invite seed. */
+export function claimInvite(inviteSeed: number[], automergeDocId: string): Promise<{ khDocId: string }> {
+  return khRequest('kh-claim-invite', { inviteSeed, automergeDocId });
+}
+
+/** Enable sharing on a document by creating a keyhive Document. */
+export function enableSharing(automergeDocId: string): Promise<{ khDocId: string; groupId: string }> {
+  return khRequest('kh-enable-sharing', { automergeDocId });
+}
+
+/** Register a previously-created sharing group so the worker can find it after reload. */
+export function registerSharingGroup(khDocId: string, groupId: string): Promise<void> {
+  return khRequest('kh-register-sharing-group', { khDocId, groupId });
+}
+
+/** Register an automerge→keyhive doc mapping for access enforcement. Fire-and-forget. */
+export function registerDocMapping(automergeDocId: string, khDocId: string): void {
+  try {
+    const msg = { type: 'kh-register-doc-mapping' as const, automergeDocId, khDocId };
+    console.log('[main] → send', msg.type, msg);
+    worker.postMessage(msg);
+  } catch { /* ignore if worker not ready */ }
 }
