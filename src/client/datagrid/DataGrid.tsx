@@ -69,8 +69,10 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
   const validationErrors = useDocumentValidation(docId);
   const { undo, redo, canUndo, canRedo, onHeadsUpdate } = useUndoRedo(docId!);
   const history = useDocumentHistory(docId!);
-  const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
+  const dgKhDocId = getDocEntry(docId!)?.khDocId;
+  const { access: dgAccess, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(dgKhDocId);
   const canEdit = !readOnly && history.editable && accessCanEdit;
+  const noAccess = !!dgKhDocId && accessLoaded && dgAccess === null;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const hfRef = useRef<HyperFormula | null>(null);
@@ -1094,6 +1096,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
         onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
       />
       <HistorySlider history={history} />
+      <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>
       <ValidationPanel errors={validationErrors} docId={docId} />
 
       {columnDefs.length > 0 && doc2 && (
@@ -1438,7 +1441,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
         </>
       )}
 
-
+      </div>
 
     </div>
     </DocLoader>

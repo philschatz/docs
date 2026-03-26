@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useConnectionStatus, usePeerList } from '../shared/automerge';
 import { createDoc, subscribeQuery, HOME_SUMMARY_QUERY } from '../worker-api';
+import { getMyAccess } from '../shared/keyhive-api';
 import { peerColor, peerDisplayName } from '../shared/presence';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
@@ -26,6 +27,8 @@ interface DocEntry {
   loading: boolean;
   peers: string[];
   encrypted?: boolean;
+  /** null = no access / revoked, undefined = not yet checked */
+  access?: string | null;
 }
 
 function relativeTime(ts: string | null): string {
@@ -104,6 +107,23 @@ export function Home({ path }: { path?: string }) {
         setEntries(prev => applyQueryResult(prev, docId, result, lastModified));
       })
     );
+
+    // Fetch keyhive access for encrypted docs
+    for (const docId of docIds) {
+      const entry = getDocList().find(e => e.id === docId);
+      if (entry?.encrypted && entry.khDocId) {
+        getMyAccess(entry.khDocId).then(access => {
+          setEntries(prev => prev.map(e =>
+            e.documentId === docId ? { ...e, access: access?.toLowerCase() ?? null } : e
+          ));
+        }).catch(() => {
+          setEntries(prev => prev.map(e =>
+            e.documentId === docId ? { ...e, access: null } : e
+          ));
+        });
+      }
+    }
+
     return () => unsubs.forEach(u => u());
   }, [docIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -518,6 +538,11 @@ export function Home({ path }: { path?: string }) {
               </a>
               {entry.loading ? (
                 <Progress className="w-16" value={0} title="Loading..." />
+              ) : entry.encrypted && entry.access === null ? (
+                <span className="text-xs text-muted-foreground flex items-center gap-1" title="You no longer have access to updates">
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>lock</span>
+                  No access
+                </span>
               ) : (
                 <>
                   <a href={viewPath} className="text-xs text-muted-foreground no-underline" style={{ minWidth: '4rem', textAlign: 'right' }} title={entry.lastUpdated || undefined}>

@@ -105,6 +105,10 @@ export function EditorTitleBar<P extends PeerLike>({
         <span className="text-lg font-bold truncate">{title}</span>
       )}
 
+      {access === 'read' && (
+        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">Read-only</span>
+      )}
+
       {children}
 
       {/* Right side */}

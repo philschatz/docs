@@ -28,8 +28,9 @@ jest.mock('../components/AccessControl', () => ({
   AccessControl: () => null,
 }));
 
+let mockAccessReturn = { access: null, canEdit: true, loaded: true };
 jest.mock('./useAccess', () => ({
-  useAccess: () => ({ canEdit: true }),
+  useAccess: () => mockAccessReturn,
 }));
 
 jest.mock('../doc-storage', () => ({
@@ -51,6 +52,7 @@ const mockUseConnectionStatus = useWsStatus as jest.Mock;
 describe('EditorTitleBar', () => {
   beforeEach(() => {
     mockUseConnectionStatus.mockReturnValue(true);
+    mockAccessReturn = { access: null, canEdit: true, loaded: true };
   });
 
   it('renders icon and title', () => {
@@ -172,5 +174,23 @@ describe('EditorTitleBar', () => {
     render(<EditorTitleBar icon="grid" title="Test" />);
     const backLink = screen.getByText('arrow_back').closest('a') as HTMLAnchorElement;
     expect(backLink.getAttribute('href')).toBe('#/');
+  });
+
+  it('shows Read-only badge when access is read', () => {
+    mockAccessReturn = { access: 'read', canEdit: false, loaded: true };
+    render(<EditorTitleBar icon="grid" title="Test" />);
+    expect(screen.getByText('Read-only')).toBeDefined();
+  });
+
+  it('does not show Read-only badge when access is admin', () => {
+    mockAccessReturn = { access: 'admin', canEdit: true, loaded: true };
+    render(<EditorTitleBar icon="grid" title="Test" />);
+    expect(screen.queryByText('Read-only')).toBeNull();
+  });
+
+  it('does not show Read-only badge when access is null (unshared doc)', () => {
+    mockAccessReturn = { access: null, canEdit: true, loaded: true };
+    render(<EditorTitleBar icon="grid" title="Test" />);
+    expect(screen.queryByText('Read-only')).toBeNull();
   });
 });

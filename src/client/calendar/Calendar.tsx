@@ -39,8 +39,10 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
   const [peerStates, setPeerStates] = useState<Record<string, PeerState<PresenceState>>>({});
   const history = useDocumentHistory(docId);
   const validationErrors = useDocumentValidation(docId);
-  const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId)?.khDocId);
+  const khDocId = getDocEntry(docId)?.khDocId;
+  const { access, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(khDocId);
   const canEdit = !readOnly && history.editable && accessCanEdit;
+  const noAccess = !!khDocId && accessLoaded && access === null;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const eventsRef = useRef<Record<string, CalendarEvent>>({});
@@ -218,6 +220,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         />
       </EditorTitleBar>
       <HistorySlider history={history} />
+      <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>
       <input
         className="border-0 bg-transparent text-sm text-muted-foreground outline-none w-full"
         placeholder="Add a description..."
@@ -267,6 +270,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         onFieldFocus={handleFieldFocus}
         peerFocusedFields={peerFocusedFields}
       />
+      </div>
     </div>
   );
 }

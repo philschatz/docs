@@ -82,12 +82,12 @@ interface InviteStatus {
 }
 
 function accessIcon(access: string | null | undefined): string {
-  if (!access) return 'share';
+  if (!access) return 'lock';
   switch (access) {
     case 'admin': return 'admin_panel_settings';
     case 'write': return 'edit';
     case 'read': return 'visibility';
-    default: return 'share';
+    default: return 'lock';
   }
 }
 
@@ -259,6 +259,13 @@ export function AccessControl({ khDocId, docId, docType, sharingGroupId, onGroup
             <div className="text-sm text-destructive mt-2 p-2 bg-destructive/10 rounded">
               {error}
               <button className="ml-2 opacity-50 hover:opacity-100" onClick={() => setError(null)}>&times;</button>
+            </div>
+          )}
+
+          {myAccess === null && members.length === 0 && (
+            <div className="mt-4 flex items-center gap-2 p-3 bg-muted rounded text-sm text-muted-foreground">
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>lock</span>
+              You no longer have access to this document
             </div>
           )}
 

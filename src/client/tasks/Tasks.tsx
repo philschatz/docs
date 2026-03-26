@@ -67,8 +67,10 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
 
   const history = useDocumentHistory(docId!);
   const validationErrors = useDocumentValidation(docId);
-  const { canEdit: accessCanEdit } = useAccess(getDocEntry(docId!)?.khDocId);
+  const khDocId = getDocEntry(docId!)?.khDocId;
+  const { access, canEdit: accessCanEdit, loaded: accessLoaded } = useAccess(khDocId);
   const canEdit = !readOnly && history.editable && accessCanEdit;
+  const noAccess = !!khDocId && accessLoaded && access === null;
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   const broadcastRef = useRef<((key: keyof PresenceState, value: any) => void) | null>(null);
@@ -253,12 +255,14 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onSharingEnabled={(khDocId, groupId) => updateDocCache(docId!, { khDocId, sharingGroupId: groupId })}
       />
       <HistorySlider history={history} />
+      <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>
       <input
         className="border-0 bg-transparent text-sm text-muted-foreground outline-none w-full"
         placeholder="Add a description..."
         value={listDesc}
         onFocus={() => { descFocusedRef.current = true; }}
         onInput={(e: any) => setListDesc(e.currentTarget.value)}
+        readOnly={!canEdit}
         onBlur={(e: any) => {
           descFocusedRef.current = false;
           if (!docId || !canEdit) return;
@@ -269,6 +273,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onKeyDown={(e: any) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       />
       <ValidationPanel errors={validationErrors} docId={docId} />
+      {canEdit && (
       <div className="flex items-center gap-2 mb-3">
         <Input
           ref={quickAddRef}
@@ -282,6 +287,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         <Button onClick={handleQuickAdd}>Add</Button>
         <Button variant="outline" className="text-destructive" onClick={deleteCompleted}>Delete Completed</Button>
       </div>
+      )}
 
       <div className="flex flex-col">
         {sorted.map(({ uid, task }) => {
@@ -295,6 +301,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
             >
               <Checkbox
                 checked={isDone}
+                disabled={!canEdit}
                 onCheckedChange={() => toggleComplete(uid, task)}
               />
               <span
@@ -322,6 +329,8 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         {sorted.length === 0 && (
           <p className="text-sm text-muted-foreground py-4">No tasks yet. Add one above.</p>
         )}
+      </div>
+
       </div>
 
       <TaskEditor

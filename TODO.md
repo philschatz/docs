@@ -23,8 +23,6 @@ actually, implement things in such a way that adding a device does not require a
 
 temporarily remove filtering the doc list by access level. I am curious what happens when a doc attempts to load
 
-Create a read-only view for each document type. Then, create a view when the user no longer has access to the document (that is more "disabled" than the read-only view)
-
 In keyhive, a user should be able to remove themselves from any group or document. Make any necessary updates to keyhive too.
 
 Store pending sync messages on the server. This might require deep changes to automerge-repo to keep track of which document changes have been seen by different users. Also, PWA's support VAPID Push notifications which might be a useful way to send updates when both clients are not online at the same time: https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Tutorials/js13kGames/Re-engageable_Notifications_Push
