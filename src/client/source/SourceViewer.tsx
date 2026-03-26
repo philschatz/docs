@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import type { PeerState } from '../shared/automerge';
 import { openDoc, subscribeQuery, updateDoc, getDocHistory, debugGetVersionPatches, setDocVersion } from '../worker-api';
-import { getDocEntry, updateDocCache } from '../doc-storage';
+import { getDocEntry } from '../doc-storage';
 import { peerColor, peerDisplayName, initPresence, type PresenceState } from '../shared/presence';
 import { EditorTitleBar } from '../shared/EditorTitleBar';
 import { HistorySlider } from '../shared/HistorySlider';
@@ -420,7 +420,7 @@ export function SourceViewer({ docId, rest }: { docId?: string; rest?: string; p
         peers={peerList}
         peerTitle={(peer) => `${peerDisplayName(peer.peerId)}${peer.value?.focusedField ? ' (editing)' : ''}`}
         showSourceLink={false}
-        onSharingEnabled={(groupId) => { if (docId) updateDocCache(docId, { sharingGroupId: groupId }); }}
+
       >
         {snapshot && (
           <Button variant="outline" size="sm" onClick={handleDownloadJson}>

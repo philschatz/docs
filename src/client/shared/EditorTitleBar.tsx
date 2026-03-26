@@ -1,9 +1,7 @@
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
 import { useWsStatus, getWorkerPeerId } from './automerge';
 import { peerColor, peerDisplayName } from './presence';
 import { AccessControl } from '../components/AccessControl';
-import { enableSharing } from './keyhive-api';
 import { useAccess } from './useAccess';
 import { getDocEntry } from '../doc-storage';
 
@@ -25,7 +23,6 @@ export function EditorTitleBar<P extends PeerLike>({
   onToggleHistory,
   historyActive = false,
   docType,
-  onSharingEnabled,
   children,
 }: {
   icon: string;
@@ -42,26 +39,11 @@ export function EditorTitleBar<P extends PeerLike>({
   historyActive?: boolean;
   /** Document type (Calendar/TaskList/DataGrid) — embedded in invite URL for correct redirect. */
   docType?: string;
-  /** Called when sharing is first enabled, with the new groupId. */
-  onSharingEnabled?: (groupId: string) => void;
   children?: ComponentChildren;
 }) {
   const connected = useWsStatus(docId!);
   const encrypted = docId ? !!getDocEntry(docId)?.encrypted : false;
-  const [enabling, setEnabling] = useState(false);
   const { access } = useAccess(encrypted ? docId : undefined);
-
-  const handleEnableSharing = async () => {
-    setEnabling(true);
-    try {
-      const { groupId } = await enableSharing(docId!);
-      onSharingEnabled?.(groupId);
-    } catch (err: any) {
-      console.error('Failed to enable sharing:', err);
-    } finally {
-      setEnabling(false);
-    }
-  };
 
   return (
     <div className="flex items-center gap-1.5 px-1 min-h-10 w-full">
@@ -116,24 +98,13 @@ export function EditorTitleBar<P extends PeerLike>({
           {connected ? 'Connected' : 'Disconnected'}
         </span>
 
-        {/* Sharing / access button (combined) */}
-        {encrypted && docId ? (
+        {/* Sharing / access button */}
+        {encrypted && docId && (
           <AccessControl
             docId={docId}
             docType={docType}
             access={access}
           />
-        ) : docId && encrypted && (
-          <button
-            className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent hover:text-accent-foreground"
-            title="Enable sharing"
-            onClick={handleEnableSharing}
-            disabled={enabling}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-              {enabling ? 'hourglass_empty' : 'share'}
-            </span>
-          </button>
         )}
 
         {/* History & source — inline on sm+, collapsed into dropdown on mobile */}

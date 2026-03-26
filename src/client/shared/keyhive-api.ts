@@ -15,7 +15,5 @@ export {
   generateInvite,
   dismissInvite,
   claimInvite,
-  enableSharing,
-  registerSharingGroup,
 } from '../worker-api';
 export type { DeviceInfo, IdentityInfo, MemberInfo } from '../worker-api';

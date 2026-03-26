@@ -28,7 +28,7 @@ import { registerCustomFunctions, getDistributionRegistry, clearDistributionRegi
 import { runMonteCarloAsync, type MCResults } from './monte-carlo';
 import { DistributionPanel } from './DistributionPanel';
 import { formatDistValue } from './helpers';
-import { addDocId, getDocEntry, updateDocCache } from '@/doc-storage';
+import { addDocId, getDocEntry } from '@/doc-storage';
 import './datagrid.css';
 
 registerCustomFunctions();
@@ -1091,7 +1091,7 @@ export function DataGrid({ docId, sheetId, readOnly }: { docId?: string; sheetId
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
         docType="DataGrid"
-        onSharingEnabled={(groupId) => updateDocCache(docId!, { sharingGroupId: groupId })}
+
       />
       <HistorySlider history={history} />
       <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>

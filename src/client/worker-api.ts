@@ -541,13 +541,3 @@ export function dismissInvite(inviteId: string, docId: string): Promise<{ invite
 export function claimInvite(inviteSeed: number[], docId: string): Promise<void> {
   return khRequest('kh-claim-invite', { inviteSeed, docId });
 }
-
-/** Enable sharing on a document. */
-export function enableSharing(docId: string): Promise<{ groupId: string }> {
-  return khRequest('kh-enable-sharing', { docId });
-}
-
-/** Register a previously-created sharing group so the worker can find it after reload. */
-export function registerSharingGroup(docId: string): Promise<void> {
-  return khRequest('kh-register-sharing-group', { docId });
-}

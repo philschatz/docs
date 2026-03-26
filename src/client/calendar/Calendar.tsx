@@ -8,7 +8,7 @@ import { EditorTitleBar } from '../shared/EditorTitleBar';
 import { useDocumentHistory } from '../shared/useDocumentHistory';
 import { useAccess } from '../shared/useAccess';
 import { HistorySlider } from '../shared/HistorySlider';
-import { getDocEntry, updateDocCache } from '../doc-storage';
+import { getDocEntry } from '../doc-storage';
 import type { CalendarEvent } from './schema';
 import { rebuildExpanded } from './recurrence';
 import { mapToSXEvents, createSXCalendar } from './schedule-x';
@@ -195,7 +195,7 @@ function CalendarInner({ docId, readOnly }: { docId: string; readOnly?: boolean 
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
         docType="Calendar"
-        onSharingEnabled={(groupId) => updateDocCache(docId, { sharingGroupId: groupId })}
+
       >
         <input
           type="color"

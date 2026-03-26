@@ -7,7 +7,7 @@ import { EditorTitleBar } from '../shared/EditorTitleBar';
 import { useDocumentHistory } from '../shared/useDocumentHistory';
 import { useAccess } from '../shared/useAccess';
 import { HistorySlider } from '../shared/HistorySlider';
-import { getDocEntry, updateDocCache } from '../doc-storage';
+import { getDocEntry } from '../doc-storage';
 import type { TaskDocument, Task } from './schema';
 import { TaskEditor } from './TaskEditor';
 import { useDocumentValidation } from '../shared/useDocumentValidation';
@@ -250,7 +250,7 @@ export function Tasks({ docId, readOnly }: { docId?: string; readOnly?: boolean;
         onToggleHistory={history.toggleHistory}
         historyActive={history.active}
         docType="TaskList"
-        onSharingEnabled={(groupId) => updateDocCache(docId!, { sharingGroupId: groupId })}
+
       />
       <HistorySlider history={history} />
       <div style={noAccess ? { opacity: 0.4, pointerEvents: 'none' } : undefined}>

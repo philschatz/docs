@@ -38,8 +38,6 @@ export type MainToWorker =
   | { type: 'kh-generate-invite'; id: number; docId: string; role: string; docType: string }
   | { type: 'kh-list-devices'; id: number }
   | { type: 'kh-remove-device'; id: number; agentId: string }
-  | { type: 'kh-enable-sharing'; id: number; docId: string }
-  | { type: 'kh-register-sharing-group'; id: number; docId: string }
   | { type: 'kh-get-known-contacts'; id: number; excludeDocId?: string }
   | { type: 'kh-claim-invite'; id: number; inviteSeed: number[]; docId: string }
   | { type: 'kh-dismiss-invite'; id: number; inviteId: string; docId: string }
@@ -1141,31 +1139,6 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
     }
   }
 
-  if (msg.type === 'kh-enable-sharing') {
-    try {
-      if (!khOps) throw new Error('Keyhive not available');
-      const result = await khOps.enableSharing(msg.docId);
-      docIdToKhDocId.set(msg.docId, result.khDocId);
-      // Update IDB list entry with new khDocId/sharingGroupId
-      try {
-        const { idbGet, idbSet } = await import('./idb-storage');
-        type StoredDocEntry = { id: string; [key: string]: any };
-        const list = (await idbGet<StoredDocEntry[]>('automerge-doc-ids')) ?? [];
-        const entry = list.find(e => e.id === msg.docId);
-        if (entry) {
-          entry.khDocId = result.khDocId;
-          if (result.groupId) entry.sharingGroupId = result.groupId;
-          entry.encrypted = true;
-          await idbSet('automerge-doc-ids', list);
-          (self as any).postMessage({ type: 'doc-list-updated', list } satisfies WorkerToMain);
-        }
-      } catch { /* non-critical */ }
-      (self as any).postMessage({ type: 'result', id: msg.id, result: { groupId: result.groupId } } satisfies WorkerToMain);
-    } catch (err: any) {
-      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
-    }
-  }
-
   if (msg.type === 'kh-generate-invite') {
     try {
       if (!khOps) throw new Error('Keyhive not available');
@@ -1221,17 +1194,6 @@ async function handleMessage(e: MessageEvent<MainToWorker>) {
       if (!khOps) throw new Error('Keyhive not available');
       const khDocId = resolveKhDocId(msg.docId);
       const result = await khOps.changeRole(msg.agentId, khDocId, msg.newRole);
-      (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
-    } catch (err: any) {
-      (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);
-    }
-  }
-
-  if (msg.type === 'kh-register-sharing-group') {
-    try {
-      if (!khOps) throw new Error('Keyhive not available');
-      const khDocId = resolveKhDocId(msg.docId);
-      const result = await khOps.registerSharingGroup(khDocId);
       (self as any).postMessage({ type: 'result', id: msg.id, result } satisfies WorkerToMain);
     } catch (err: any) {
       (self as any).postMessage({ type: 'result', id: msg.id, error: errMsg(err) } satisfies WorkerToMain);

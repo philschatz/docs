@@ -20,8 +20,6 @@ jest.mock('./keyhive-api', () => ({
   changeRole: jest.fn(),
   revokeMember: jest.fn(),
   generateInvite: jest.fn(),
-  enableSharing: jest.fn(() => Promise.resolve({ groupId: 'test' })),
-  registerSharingGroup: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../components/AccessControl', () => ({
