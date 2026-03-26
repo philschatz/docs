@@ -413,8 +413,11 @@ export function Home({ path }: { path?: string }) {
   const sortedEntries = useMemo(() => {
     const indexById = new Map(entries.map((e, i) => [e.documentId, i]));
     return [...entries].sort((a, b) => {
-      // Both have lastUpdated: sort newest first
-      if (a.lastUpdated && b.lastUpdated) return b.lastUpdated.localeCompare(a.lastUpdated);
+      // Both have lastUpdated: sort newest first, tiebreak by id for stability
+      if (a.lastUpdated && b.lastUpdated) {
+        const cmp = b.lastUpdated.localeCompare(a.lastUpdated);
+        return cmp !== 0 ? cmp : a.documentId.localeCompare(b.documentId);
+      }
       // Only one has lastUpdated: it goes first
       if (a.lastUpdated && !b.lastUpdated) return -1;
       if (!a.lastUpdated && b.lastUpdated) return 1;
