@@ -102,6 +102,37 @@ describe('updateDocCache', () => {
     updateDocCache('doc-999', { name: 'Ghost' });
     expect(getDocList()).toEqual([{ id: 'doc-1' }]);
   });
+
+  it('dispatches to worker so IDB stays in sync', () => {
+    const messages: Array<{ msgType: string; docId: string; metadata: any }> = [];
+    setDocListDispatch((msgType, docId, metadata) => {
+      messages.push({ msgType, docId, metadata });
+    });
+
+    addDocId('doc-1', { type: 'Calendar', name: 'Old' });
+    messages.length = 0; // clear the addDocId dispatch
+
+    updateDocCache('doc-1', { name: 'New Title' });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].msgType).toBe('add-doc-to-list');
+    expect(messages[0].docId).toBe('doc-1');
+    expect(messages[0].metadata).toEqual({ name: 'New Title' });
+
+    setDocListDispatch(null as any);
+  });
+
+  it('does not dispatch for non-existent doc', () => {
+    const messages: any[] = [];
+    setDocListDispatch((msgType, docId, metadata) => {
+      messages.push({ msgType, docId, metadata });
+    });
+
+    updateDocCache('doc-999', { name: 'Ghost' });
+    expect(messages).toHaveLength(0);
+
+    setDocListDispatch(null as any);
+  });
 });
 
 describe('applyDocListFromWorker', () => {

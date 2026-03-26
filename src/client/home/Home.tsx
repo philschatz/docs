@@ -66,6 +66,8 @@ export function Home({ path }: { path?: string }) {
   const showUnencrypted = localStorage.getItem('showUnencrypted') !== 'false';
   const createSecure = !showUnencrypted;
 
+  useEffect(() => { document.title = 'Automerge Documents'; }, []);
+
   // Subscribe to worker-pushed doc list updates (IDB → localStorage cache)
   useEffect(() => {
     return onDocListUpdated((list) => {
